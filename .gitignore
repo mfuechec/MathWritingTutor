@@ -1,6 +1,17 @@
 # OSX
 .DS_Store
 
+# Backup directories - don't track old code
+backup_*/
+code-backup/
+
+# BMAD project (separate project, shouldn't be in this repo)
+BMAD-METHOD/
+bmad/
+
+# PDFs and documentation that can be regenerated
+*.pdf
+
 # Xcode
 build/
 *.pbxuser
