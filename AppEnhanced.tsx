@@ -63,8 +63,8 @@ const FeedbackCard = ({ message, isCorrect, theme, slideAnim }: {
       style={[
         {
           marginHorizontal: 20,
-          marginTop: 16,
-          marginBottom: 16,
+          marginTop: 8,
+          marginBottom: 8,
         },
         { transform: [{ translateY: slideAnim }] }
       ]}
@@ -115,6 +115,7 @@ export default function App() {
   const [showGuideLines, setShowGuideLines] = useState<boolean>(true);
   const [isErasing, setIsErasing] = useState<boolean>(false);
   const [eraserPosition, setEraserPosition] = useState<{ x: number; y: number } | null>(null);
+  const [canvasDimensions, setCanvasDimensions] = useState({ width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
 
   // Validation state
   const [validating, setValidating] = useState(false);
@@ -445,10 +446,22 @@ export default function App() {
   useEffect(() => {
     if (voiceFeedback && currentProblem.introductionText) {
       const speakableText = LatexToSpeech.convert(currentProblem.introductionText);
+
+      dialogueManager.onSpeechStart();
+      setIsAISpeaking(true);
+
       Speech.speak(speakableText, {
         language: 'en-US',
         pitch: 1.0,
         rate: 0.9,
+        onDone: () => {
+          dialogueManager.onSpeechEnd();
+          setIsAISpeaking(false);
+        },
+        onStopped: () => {
+          dialogueManager.onSpeechEnd();
+          setIsAISpeaking(false);
+        },
       });
     }
   }, [currentProblem.id, voiceFeedback]);
@@ -488,13 +501,27 @@ export default function App() {
     if (!voiceFeedback) return;
     try {
       const speakableText = LatexToSpeech.convert(hint);
+
+      dialogueManager.onSpeechStart();
+      setIsAISpeaking(true);
+
       Speech.speak(speakableText, {
         language: 'en-US',
         pitch: 0.95,
         rate: 0.85,
+        onDone: () => {
+          dialogueManager.onSpeechEnd();
+          setIsAISpeaking(false);
+        },
+        onStopped: () => {
+          dialogueManager.onSpeechEnd();
+          setIsAISpeaking(false);
+        },
       });
     } catch (error) {
       console.error('Hint speech failed:', error);
+      dialogueManager.onSpeechEnd();
+      setIsAISpeaking(false);
     }
   }, [voiceFeedback]);
 
@@ -570,10 +597,22 @@ export default function App() {
         console.log('📢 Voice command: Read problem');
         const problemText = LatexToSpeech.convert(currentProblem.content);
         const intro = currentProblem.introductionText ? LatexToSpeech.convert(currentProblem.introductionText) : '';
+
+        dialogueManager.onSpeechStart();
+        setIsAISpeaking(true);
+
         Speech.speak(`${intro} The problem is: ${problemText}`, {
           language: 'en-US',
           pitch: 1.0,
           rate: 0.9,
+          onDone: () => {
+            dialogueManager.onSpeechEnd();
+            setIsAISpeaking(false);
+          },
+          onStopped: () => {
+            dialogueManager.onSpeechEnd();
+            setIsAISpeaking(false);
+          },
         });
       },
       onClear: () => {
@@ -761,14 +800,15 @@ export default function App() {
 
   const generateGuideLines = () => {
     const lines = [];
-    const numLines = Math.floor(CANVAS_HEIGHT / GUIDE_LINE_SPACING);
+    // Calculate lines based on actual canvas height
+    const numLines = Math.floor(canvasDimensions.height / GUIDE_LINE_SPACING);
     for (let i = 1; i <= numLines; i++) {
       lines.push({ key: `guide-${i}`, y: i * GUIDE_LINE_SPACING, number: i });
     }
     return lines;
   };
 
-  const guideLines = generateGuideLines();
+  const guideLines = useMemo(() => generateGuideLines(), [canvasDimensions.height]);
 
   const getStrokesByLine = useCallback(() => {
     const lineGroups: { [lineNumber: number]: number[] } = {};
@@ -804,6 +844,7 @@ export default function App() {
     setStepCorrectness([]);
     setCurrentStep(1);
     setCompletedSteps([]);
+    setValidatedTexts({}); // Clear validated text animations
 
     // Reset total steps estimate with fallback to difficulty-based defaults
     // Use provided problem or fall back to current problem
@@ -892,10 +933,21 @@ export default function App() {
       })();
 
       if (voiceFeedback) {
+        dialogueManager.onSpeechStart();
+        setIsAISpeaking(true);
+
         Speech.speak("Excellent work! You've solved the problem!", {
           language: 'en-US',
           pitch: 1.1,
           rate: 0.9,
+          onDone: () => {
+            dialogueManager.onSpeechEnd();
+            setIsAISpeaking(false);
+          },
+          onStopped: () => {
+            dialogueManager.onSpeechEnd();
+            setIsAISpeaking(false);
+          },
         });
       }
     }
@@ -1240,8 +1292,11 @@ export default function App() {
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style={darkMode ? "light" : "dark"} />
 
-        {/* Problem Display */}
-        <View style={[styles.problemContainer, { backgroundColor: theme.cardBg }]}>
+        {/* Main Content Wrapper - Uses flex to distribute space */}
+        <View style={{ flex: 1 }}>
+          {/* Problem Display */}
+          <View style={[styles.problemContainer, { backgroundColor: theme.cardBg }]}>
+
           <View style={styles.problemHeader}>
             <Text style={[styles.problemLabel, { color: theme.textSecondary }]}>
               SOLVE FOR {currentProblem.goalState.variable?.toUpperCase()}
@@ -1266,21 +1321,6 @@ export default function App() {
           </View>
 
           <Text style={[styles.problemText, { color: theme.text }]}>{currentProblem.content}</Text>
-
-          {/* AI Speaking Indicator */}
-          {isAISpeaking && (
-            <View style={[styles.aiSpeakingBanner, {
-              backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.08)',
-              borderColor: darkMode ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.2)',
-            }]}>
-              <View style={styles.soundBars}>
-                <Animated.View style={[styles.soundBar, { transform: [{ scaleY: soundBar1Anim }] }]} />
-                <Animated.View style={[styles.soundBar, { transform: [{ scaleY: soundBar2Anim }] }]} />
-                <Animated.View style={[styles.soundBar, { transform: [{ scaleY: soundBar3Anim }] }]} />
-              </View>
-              <Text style={styles.aiSpeakingText}>AI is speaking...</Text>
-            </View>
-          )}
         </View>
 
         {/* Toolbar */}
@@ -1335,35 +1375,99 @@ export default function App() {
             </TouchableOpacity>
           </View>
 
-          {/* Voice Button */}
-          <Animated.View
-            style={{
-              transform: [{ scale: waitingForAnswer ? answerModePulseAnim : 1 }],
-            }}
-          >
-            <TouchableOpacity
-              style={[
-                styles.micButton,
-                isListening && styles.micButtonListening,
-                waitingForAnswer && styles.micButtonWaiting
-              ]}
-              onPress={() => {
-                if (isListening) {
-                  stopListening();
-                } else {
-                  startListening();
-                }
+          {/* Voice Button with AI Speaking Indicator */}
+          <View style={{ position: 'relative' }}>
+            <Animated.View
+              style={{
+                transform: [{ scale: waitingForAnswer ? answerModePulseAnim : 1 }],
               }}
             >
-              <Text style={styles.micButtonIcon}>🎤</Text>
-              <Text style={styles.micButtonText}>Tap to respond</Text>
-            </TouchableOpacity>
-          </Animated.View>
+              <TouchableOpacity
+                style={[
+                  styles.micButton,
+                  isListening && styles.micButtonListening,
+                  waitingForAnswer && styles.micButtonWaiting,
+                  isAISpeaking && {
+                    backgroundColor: '#3B82F6',
+                    borderColor: '#2563EB',
+                  }
+                ]}
+                onPress={() => {
+                  if (isListening) {
+                    stopListening();
+                  } else {
+                    startListening();
+                  }
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  {isAISpeaking && (
+                    <View style={{ flexDirection: 'row', gap: 3, alignItems: 'center', marginRight: 4 }}>
+                      <Animated.View style={{
+                        width: 3,
+                        height: 14,
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 2,
+                        transform: [{ scaleY: soundBar1Anim }]
+                      }} />
+                      <Animated.View style={{
+                        width: 3,
+                        height: 14,
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 2,
+                        transform: [{ scaleY: soundBar2Anim }]
+                      }} />
+                      <Animated.View style={{
+                        width: 3,
+                        height: 14,
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 2,
+                        transform: [{ scaleY: soundBar3Anim }]
+                      }} />
+                    </View>
+                  )}
+                  <Text style={styles.micButtonIcon}>🎤</Text>
+                  <Text style={[styles.micButtonText, isAISpeaking && { color: '#FFFFFF' }]}>
+                    {isAISpeaking ? 'AI speaking...' : 'Tap to respond'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </Animated.View>
+          </View>
         </View>
 
         {/* Canvas */}
         <GestureDetector gesture={drawGesture}>
-          <View style={[styles.canvasContainer, { backgroundColor: theme.canvasBg }]}>
+          <View
+            style={[styles.canvasContainer, { backgroundColor: theme.canvasBg }]}
+            onLayout={(event) => {
+              const { width, height } = event.nativeEvent.layout;
+              setCanvasDimensions({ width, height });
+            }}
+          >
+            {/* Check My Work Button - Floating in top right */}
+            {hasUnvalidatedStrokes && !autoValidate && (
+              <Animated.View style={[
+                styles.floatingCheckButton,
+                { transform: [{ scale: validating ? 1 : pulseAnim }] }
+              ]}>
+                <TouchableOpacity
+                  style={[
+                    styles.circleCheckButton,
+                    validating && styles.circleCheckButtonDisabled
+                  ]}
+                  onPress={() => validateCurrentLine(true)}
+                  disabled={validating}
+                >
+                  {validating ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.circleCheckIcon}>✓</Text>
+                  )}
+                </TouchableOpacity>
+              </Animated.View>
+            )}
+
             {pathStrings.length === 0 && (
               <View style={styles.emptyState}>
                 <Text style={[styles.emptyStateText, { color: theme.textSecondary }]}>
@@ -1395,7 +1499,7 @@ export default function App() {
                 <Line
                   key={line.key}
                   p1={{ x: 0, y: line.y }}
-                  p2={{ x: CANVAS_WIDTH, y: line.y }}
+                  p2={{ x: canvasDimensions.width, y: line.y }}
                   color={theme.canvasLine}
                   strokeWidth={GUIDE_LINE_WIDTH}
                 />
@@ -1516,25 +1620,6 @@ export default function App() {
           );
         })()}
 
-        {/* Check My Work Button */}
-        {hasUnvalidatedStrokes && !autoValidate && (
-          <Animated.View style={{ transform: [{ scale: validating ? 1 : pulseAnim }] }}>
-            <TouchableOpacity
-              style={[styles.submitButton, validating && styles.submitButtonDisabled]}
-              onPress={() => validateCurrentLine(true)}
-              disabled={validating}
-            >
-              {validating ? (
-                <View style={styles.validatingContent}>
-                  <ActivityIndicator color="#fff" size="small" />
-                  <Text style={styles.submitButtonText}>{validationProgress}</Text>
-                </View>
-              ) : (
-                <Text style={styles.submitButtonText}>✓ Check My Work</Text>
-              )}
-            </TouchableOpacity>
-          </Animated.View>
-        )}
 
         {/* Old Feedback Section - REMOVE THIS */}
         {false && Object.keys(validationResults).length > 0 && (
@@ -1591,6 +1676,7 @@ export default function App() {
             </ScrollView>
           </View>
         )}
+        </View>
 
         {/* Problem Selector Modal */}
         <Modal
@@ -1750,9 +1836,10 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1 },
   problemContainer: {
-    padding: 28,
+    padding: 20,
     marginHorizontal: 20,
     marginTop: 10,
+    marginBottom: 0,
     borderRadius: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
@@ -1832,7 +1919,8 @@ const styles = StyleSheet.create({
     padding: 12,
     paddingHorizontal: 20,
     marginHorizontal: 20,
-    marginTop: 16,
+    marginTop: 12,
+    marginBottom: 0,
     borderRadius: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -1941,11 +2029,12 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
   canvasContainer: {
+    flex: 1,
     marginHorizontal: 20,
-    marginTop: 16,
+    marginTop: 12,
+    marginBottom: 12,
     borderRadius: 20,
-    padding: 32,
-    minHeight: 400,
+    padding: 24,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
@@ -2020,8 +2109,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   canvas: {
-    width: CANVAS_WIDTH,
-    height: CANVAS_HEIGHT,
+    flex: 1,
   },
   hintBanner: {
     marginHorizontal: 20,
@@ -2097,12 +2185,42 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
-  // New action button styles
+  // Floating circular check button
+  floatingCheckButton: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    zIndex: 10,
+  },
+  circleCheckButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#10B981',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  circleCheckButtonDisabled: {
+    backgroundColor: '#9E9E9E',
+    shadowColor: '#000',
+  },
+  circleCheckIcon: {
+    fontSize: 28,
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
+  // Old action button styles (kept for reference)
   submitButton: {
     backgroundColor: '#10B981',
     marginHorizontal: 20,
-    marginTop: 12,
-    paddingVertical: 18,
+    marginTop: 8,
+    marginBottom: 20,
+    paddingVertical: 16,
     borderRadius: 16,
     flexDirection: 'row',
     justifyContent: 'center',
