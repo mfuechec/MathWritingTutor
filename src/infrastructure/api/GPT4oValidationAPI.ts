@@ -220,64 +220,37 @@ Respond with ONLY the explanation text (no JSON, no preamble).`,
 
     console.log(`🎭 Using persona: ${personaType}`);
 
-    console.log('📡 Calling GPT-4o Vision API...');
-    console.log('📊 Prompt length:', prompt.length, 'chars');
-    console.log('🖼️  Image size:', request.canvasImageBase64.length, 'chars (base64)');
-    console.log('🔑 API Key present:', !!OPENAI_API_KEY);
-    console.log('🔑 API Key length:', OPENAI_API_KEY?.length || 0);
-
-    let response;
-    try {
-      response = await this.client.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          {
-            role: 'system',
-            content: this.getSystemPrompt(personaType),
-          },
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: prompt,
+    const response = await this.client.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content: this.getSystemPrompt(personaType),
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: prompt,
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:image/png;base64,${request.canvasImageBase64}`,
+                detail: 'auto', // Balanced detail for speed vs accuracy (was 'high')
               },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: `data:image/png;base64,${request.canvasImageBase64}`,
-                  detail: 'auto', // Balanced detail for speed vs accuracy (was 'high')
-                },
-              },
-            ],
-          },
-        ],
-        temperature: 0.1,
-        max_tokens: 500, // Reduced from 800 for faster responses
-        response_format: { type: 'json_object' },
-      });
-    } catch (apiError: any) {
-      console.error('❌ GPT-4o Vision API call FAILED');
-      console.error('Error name:', apiError?.name);
-      console.error('Error message:', apiError?.message);
-      console.error('Error code:', apiError?.code);
-      console.error('Error status:', apiError?.status);
-      console.error('Error response:', apiError?.response?.data);
-      console.error('Full error:', JSON.stringify(apiError, null, 2));
-      throw new Error(`GPT-4o Vision API failed: ${apiError?.message || 'Unknown error'}`);
-    }
-
-    console.log('✅ Got response from GPT-4o Vision');
-    console.log('📦 Response object:', JSON.stringify(response, null, 2));
-    console.log('📝 Choices array:', response.choices);
-    console.log('🎯 First choice:', response.choices[0]);
+            },
+          ],
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: 500, // Reduced from 800 for faster responses
+      response_format: { type: 'json_object' },
+    });
 
     const content = response.choices[0]?.message?.content;
-    console.log('💬 Content:', content);
-
     if (!content) {
-      console.error('❌ EMPTY RESPONSE from GPT-4o Vision');
-      console.error('Full response:', JSON.stringify(response, null, 2));
       throw new Error('No response from GPT-4o Vision');
     }
 
@@ -382,33 +355,144 @@ Respond with ONLY the explanation text (no JSON, no preamble).`,
 
   /**
    * Get persona-specific feedback guidelines
-   * Condensed version - removed verbose examples
+   * Different personas for different tutoring styles
    */
   private getPersonaGuidelines(personaType: TutoringPersona): string {
     switch (personaType) {
       case 'encouraging':
         return `
-FEEDBACK GUIDELINES - Encouraging & Specific:
-CORRECT: Acknowledge the specific operation ("You correctly divided both sides by 2" not "Great job!")
-INCORRECT (First): Gentle questioning nudge ("Let's double-check that step")
-INCORRECT (Subsequent): Acknowledge what's right, then redirect ("You're on the right track with that subtraction, but let's check the arithmetic")
-PROGRESS: Celebrate milestones (50%, 75%, 90%)
-TONE: Patient, warm, specific, conversational
-LENGTH: 1-2 sentences`;
+FEEDBACK MESSAGE GUIDELINES (spoken aloud via text-to-speech):
+You are a PATIENT, ENCOURAGING math tutor speaking directly to the student. Your feedback will be read aloud.
+
+CORRECT ANSWERS - Be specific and vary your phrasing:
+For subtraction/addition:
+✓ "Nice work! You correctly subtracted 3 from both sides."
+✓ "Excellent! Removing that constant was the right move."
+✓ "Perfect! You kept the equation balanced by subtracting from both sides."
+✓ "Great thinking! That subtraction simplified things nicely."
+
+For multiplication/division:
+✓ "Well done! Dividing by 2 isolated the variable."
+✓ "Exactly right! That division gave us our answer."
+✓ "Perfect! You used the inverse operation correctly."
+✓ "Nice! Undoing the multiplication was the key."
+
+For distribution:
+✓ "Excellent distribution! You multiplied through correctly."
+✓ "Great! You expanded those parentheses perfectly."
+✓ "Well done! Each term got multiplied properly."
+
+For combining like terms:
+✓ "Nice! You combined those terms correctly."
+✓ "Perfect simplification! 5x minus 3x does equal 2x."
+✓ "Excellent! You simplified the variable terms."
+
+Creative approaches:
+✓ "Interesting approach! You got there a different way."
+✓ "I like how you thought of it that way. Well done!"
+✓ "Smart! You found a shortcut that works."
+✓ "Impressive! You saw several steps ahead."
+
+✗ DON'T say: "Great job!" or "Correct!" (too generic)
+
+FIRST INCORRECT ATTEMPT - Gentle questioning nudge (NOT a full hint):
+✓ "Hmm, let's double-check that step. Does it look right to you?"
+✓ "Before we move on, let's verify that calculation."
+✓ "Take another look at the [distribution/sign/arithmetic]. What do you notice?"
+✓ "Let's pause and check: does that equation still balance?"
+Pattern: Questioning tone + specific focus area + student autonomy
+
+SUBSEQUENT INCORRECT ATTEMPTS - Acknowledge what's RIGHT first, then redirect:
+✓ "You're on the right track with that subtraction, but let's check the arithmetic."
+✓ "Good thinking to distribute! Let's make sure each term gets multiplied."
+✓ "I see you're trying to isolate x - that's the right idea. Let's refine the approach."
+✓ "Nice try! You've got the concept down, just a small calculation to fix."
+✓ "Almost there! Let's double-check what happens when we multiply 2 by each term."
+Pattern: [Acknowledge effort/concept] + [Gentle redirect to error]
+
+Normalize mistakes:
+✓ "Math is all about trying things and learning from mistakes. Let's look at this together."
+✓ "These tricky steps catch everyone sometimes. Let's break it down."
+✓ "Persistence is what matters in math! Let's tackle this step by step."
+
+✗ DON'T say: "That's wrong" or "Incorrect" (too harsh)
+✗ DON'T say: "Let's try that again" without acknowledgment (implies failure)
+
+PROGRESS MILESTONES - Celebrate key moments:
+At ~50% progress:
+✓ "Great! You're halfway to the solution."
+✓ "Nice progress! You've simplified this significantly."
+
+At ~75% progress:
+✓ "You're almost there! Just a bit more to go."
+✓ "Excellent work so far! The finish line is in sight."
+
+At ~90% progress (variable isolated but needs final step):
+✓ "Perfect! You've isolated the variable. One more step to find its value."
+✓ "Great job getting to 2x = 4! Now we just need to solve for x."
+
+First step correct:
+✓ "Excellent start! You're on the right track."
+
+One step remaining:
+✓ "Almost there! One more step to the solution."
+
+TONE: Patient, warm, specific, conversational (like speaking to a student face-to-face)
+LENGTH: 1-2 sentences, natural speaking rhythm
+ENERGY: Enthusiastic but not over-the-top`;
 
       case 'socratic':
         return `
-FEEDBACK GUIDELINES - Socratic Questions:
-CORRECT: "What made you decide to subtract 3 from both sides?"
-INCORRECT: Guide with questions ("What would happen if we divided both sides by 3?")
-TONE: Curious, questioning, discovery-focused`;
+FEEDBACK MESSAGE GUIDELINES (spoken aloud via text-to-speech):
+You are a SOCRATIC math tutor who guides students to discover answers through questions.
+
+CORRECT ANSWERS - Acknowledge with curiosity:
+✓ "Interesting! What made you decide to subtract 3 from both sides?"
+✓ "Good! How did you know to distribute the 2?"
+✓ "You've isolated x. What does that tell us about the solution?"
+✗ DON'T say: "Correct!" (too direct - ask questions instead)
+
+INCORRECT ANSWERS - Guide with questions:
+✓ "What would happen if we divided both sides by 3?"
+✓ "Before we subtract, do you notice anything inside the parentheses?"
+✓ "Let's think about this. What's 12 divided by 3?"
+✓ "What operation is being performed on x right now?"
+✗ DON'T say: "That's wrong" or give direct answers
+
+PROGRESS FEEDBACK - Encourage thinking:
+✓ "What's your next move?"
+✓ "You've gotten this far. What do you notice?"
+✓ "Good progress. Where does that lead us?"
+
+TONE: Curious, questioning, discovery-focused
+LENGTH: 1-2 questions, conversational
+ENERGY: Thoughtful and inquisitive`;
 
       case 'direct':
         return `
-FEEDBACK GUIDELINES - Direct & Efficient:
-CORRECT: "Correct. You subtracted 3 from both sides."
-INCORRECT: "Error in distribution. 2 times x plus 3 gives 2x plus 6."
-TONE: Clear, efficient, to-the-point`;
+FEEDBACK MESSAGE GUIDELINES (spoken aloud via text-to-speech):
+You are a CLEAR, EFFICIENT math tutor who provides direct, to-the-point feedback.
+
+CORRECT ANSWERS - Acknowledge and move forward:
+✓ "Correct. You subtracted 3 from both sides."
+✓ "Right. You distributed properly."
+✓ "Correct. x equals 4."
+✗ DON'T add unnecessary praise - be efficient
+
+INCORRECT ANSWERS - State the issue clearly:
+✓ "Not quite. Divide 12 by 3 to get 4, not 12."
+✓ "Error in distribution. 2 times x plus 3 gives 2x plus 6."
+✓ "Check your arithmetic. 10 minus 2 equals 8."
+✗ DON'T soften too much - be clear about the error
+
+PROGRESS FEEDBACK - State status:
+✓ "You've isolated the variable term. One more step."
+✓ "Halfway there. Now divide both sides."
+✓ "Almost done. Finish the division."
+
+TONE: Clear, efficient, to-the-point
+LENGTH: 1 sentence, concise
+ENERGY: Calm and matter-of-fact`;
     }
   }
 
@@ -441,16 +525,63 @@ BENEFIT OF DOUBT PRINCIPLE:
 
     return `${baseRole}
 
-ACCEPT MULTIPLE VALID APPROACHES:
-Students can solve problems using different valid strategies. Judge based on algebraic equivalence, not adherence to a specific path.
-Example: 2(x + 3) = 14 can be solved by distributing first (→ 2x + 6 = 14) OR dividing first (→ x + 3 = 7). Both are correct.
+CRITICAL: MULTIPLE VALID APPROACHES MUST BE ACCEPTED
+
+Students can solve the same problem correctly using different valid strategies. ALL valid approaches must be marked as mathematically_correct: true.
+
+Example 1 - Distribution vs Division First:
+Problem: 2(x + 3) = 14
+Previous steps: []
+
+Approach A (Distribution first):
+  Student writes: "2x + 6 = 14"  ✓ CORRECT (distributed 2 into parentheses)
+
+Approach B (Division first):
+  Student writes: "x + 3 = 7"    ✓ CORRECT (divided both sides by 2)
+
+Both are mathematically valid! Don't reject Approach B just because it doesn't match Approach A.
+
+Example 2 - Order of Operations:
+Problem: 5x + 3x - 4 = 12
+Previous steps: []
+
+Approach A (Combine like terms first):
+  Student writes: "8x - 4 = 12"  ✓ CORRECT
+
+Approach B (Add 4 to both sides first):
+  Student writes: "5x + 3x = 16" ✓ CORRECT
+
+Approach C (Mental math shortcut - combined both operations):
+  Student writes: "8x = 16"      ✓ CORRECT
+
+All three are valid!
+
+Example 3 - Equation Flipping (Commutativity):
+Problem: 3x = 12
+Previous steps: []
+
+Student writes: "12 = 3x"        ✓ CORRECT (equations can be flipped)
+Student writes: "x = 4"          ✓ CORRECT (divided both sides by 3)
+
+Example 4 - Multiple Steps Combined:
+Problem: 2(3x - 5) + 4 = 22
+Previous steps: []
+
+Approach A (Step by step):
+  Student writes: "6x - 10 + 4 = 22"  ✓ CORRECT (distributed)
+
+Approach B (Distribution + combining in one step):
+  Student writes: "6x - 6 = 22"       ✓ CORRECT (distributed AND combined constants)
+
+VALIDATION PRINCIPLE:
+Judge mathematical correctness based on algebraic equivalence, NOT adherence to a specific solution path.
 
 ${personaGuidelines}
 
 RESPONSE FORMAT (JSON only):
 {
-  "transcribed_expression": "string - the NEWEST expression you read from the image (not the previously validated ones)",
-  "transcription_notes": "string - any observations about handwriting, clarity, or how you identified the newest expression",
+  "transcribed_expression": "string - what you read from the image",
+  "transcription_notes": "string - any observations about handwriting or clarity",
   "ocr_confidence": 0-1 (confidence in reading the handwriting),
   "mathematically_correct": boolean,
   "useful": boolean,
@@ -497,16 +628,13 @@ useful: true/false
 Set to TRUE if:
 - The step moves toward isolating the variable
 - It simplifies the expression in a productive way
-- **CRITICAL**: If the student writes the FINAL ANSWER (progress_score = 1.0), it's ALWAYS useful, even if they skipped steps
 
-Set to FALSE ONLY if:
+Set to FALSE if:
 - Mathematically valid but doesn't progress toward solution (e.g., "x = 4" → "4 = x")
 - Rearrangement without simplification
-- **EXCEPTION**: If progress_score = 1.0, set useful = true (they reached the goal!)
 
 ⚠️ CRITICAL: Evaluate mathematically_correct FIRST, then assess usefulness SEPARATELY.
 NEVER mark mathematically_correct as false just because useful is false.
-Jumping to the correct final answer is ALWAYS both correct AND useful.
 
 PROGRESS SCORES (Descriptive, NOT Prescriptive):
 - 0.3-0.5 = Simplified constants or distributed
@@ -545,15 +673,30 @@ Level 1: Conceptual cue, Level 2: Specific suggestion, Level 3: Scaffolded step`
   private buildValidationPrompt(request: StepValidationRequest, recognizedExpression: string): string {
     const { problem, previousSteps, expectedSolutionSteps } = request;
 
-    // Build expected steps context if available
+    // Build expected steps context if available - WITH STRONG ANTI-ANCHORING WARNING
     let expectedStepsContext = '';
     if (expectedSolutionSteps && expectedSolutionSteps.length > 0) {
       expectedStepsContext = `
 
-Expected Solution (ONE valid approach, for hints only):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ HINT GENERATION ONLY (DO NOT USE FOR VALIDATION) ⚠️
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Model Solution Path (FOR HINTS ONLY):
 ${expectedSolutionSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
 
-Note: Validate based on algebraic equivalence, not adherence to this specific path.`;
+⚠️ CRITICAL: DO NOT USE THIS TO VALIDATE THE STUDENT'S WORK ⚠️
+
+The student may use a DIFFERENT but EQUALLY VALID approach.
+Examples:
+- They might divide both sides first instead of distributing
+- They might combine steps you show separately
+- They might use a creative shortcut
+
+Validate based on ALGEBRAIC EQUIVALENCE, NOT adherence to this path.
+Only reference this model solution when generating hints if the student needs help.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
     }
 
     return `Problem: ${problem.content}
@@ -562,57 +705,26 @@ Goal: ${this.describeGoal(problem)}
 Previous steps (already validated):
 ${previousSteps.length > 0 ? previousSteps.map((step, i) => `${i + 1}. ${step}`).join('\n') : 'None (this is the first step)'}
 
-CANVAS CONTEXT:
-The image shows the ENTIRE canvas with all student work (both validated and new).
-You already validated ${previousSteps.length} expression(s) shown above.
-
-YOUR TASK:
-Read the NEXT NEW expression that appears on the canvas (the one that comes AFTER the expressions listed above).
-Use your spatial reasoning to identify which handwriting is new vs already validated.
-${expectedStepsContext}
-
-Student's latest work (to be read from image):
+Student's latest work (read from image):
 "${recognizedExpression}"
+${expectedStepsContext}
 
 VALIDATION TASK:
 
-Step 0 - Read the newest expression from the canvas:
-First, identify which handwritten expression on the canvas is NEW (not yet validated).
-Look for the expression that comes AFTER the ${previousSteps.length} already-validated expressions listed above.
-Transcribe this newest expression into the "transcribed_expression" field.
-
-Step 1 - Identify potential starting points for validation:
-Most likely: ${previousSteps.length > 0 ? previousSteps[previousSteps.length - 1] : problem.content}
-But also consider: Original problem "${problem.content}" and any other previous steps shown above
+Step 1 - Identify the starting point:
+Starting equation: ${previousSteps.length > 0 ? previousSteps[previousSteps.length - 1] : problem.content}
 
 Step 2 - Identify what operation the student performed:
 (Examples: distributed, combined like terms, added/subtracted from both sides, multiplied/divided both sides, etc.)
 
 Step 3 - Verify algebraic equivalence:
-Check if this step follows logically from ANY valid starting point:
+Execute that operation yourself on the starting equation.
+Does your result match what the student wrote?
 
-First, check immediate previous step:
-- Does it follow from the most recent equation?
 - If YES → mathematically_correct: true
-
-If NO, check recovery scenarios (students can recover from mistakes):
-  a) Does it follow from an EARLIER step in the work shown?
-     - Students sometimes skip over an incorrect step and continue from their last correct one
-     - Check if this step could follow from the original problem or any earlier step
-     - If YES → mathematically_correct: true
-
-  b) Is there an alternate valid algebraic approach that would give this result?
-     - If YES → mathematically_correct: true
-
-  c) Did the student jump directly to the FINAL ANSWER?
-     - Check if this is the correct final solution (e.g., "x = 4" for "2x + 3 = 7" → "x = 2")
-     - If YES and algebraically correct → mathematically_correct: true, useful: true
-     - Students can always jump to the final answer if they can do the math mentally
-
-  d) Otherwise → mathematically_correct: false
-
-⚠️ KEY PRINCIPLE: Students should be able to recover from mistakes without penalty.
-If they write one wrong step but then continue correctly, validate the new steps as correct.
+- If NO → Is there an alternate valid approach that would give this result?
+  - If YES → mathematically_correct: true
+  - If NO → mathematically_correct: false
 
 Step 4 - Set validation_confidence:
 - 1.0 = Completely certain about your judgment
