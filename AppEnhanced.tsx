@@ -1438,6 +1438,15 @@ export default function App() {
           const result = validationResults[latestLineNum];
           const isCorrect = result.mathematicallyCorrect;
 
+          // DEBUG: Log the actual result object
+          console.log('🐛 DEBUG - Feedback Card Render:');
+          console.log('   Latest Line Number:', latestLineNum);
+          console.log('   Result Object:', result);
+          console.log('   Result Keys:', Object.keys(result));
+          console.log('   feedbackMessage:', result.feedbackMessage);
+          console.log('   feedback_message:', result.feedback_message);
+          console.log('   mathematicallyCorrect:', result.mathematicallyCorrect);
+
           return (
             <Animated.View style={[styles.feedbackCardContainer, { transform: [{ translateY: feedbackSlideAnim }] }]}>
               <View style={[
@@ -1455,7 +1464,7 @@ export default function App() {
                     {isCorrect ? 'Excellent work!' : 'Let\'s think about this...'}
                   </Text>
                   <Text style={[styles.feedbackMessage, { color: isCorrect ? '#047857' : '#92400E' }]}>
-                    {result.feedbackMessage}
+                    {result.feedbackMessage || result.feedback_message || '[No feedback message]'}
                   </Text>
                 </View>
               </View>
