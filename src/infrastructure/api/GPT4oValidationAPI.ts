@@ -470,13 +470,16 @@ useful: true/false
 Set to TRUE if:
 - The step moves toward isolating the variable
 - It simplifies the expression in a productive way
+- **CRITICAL**: If the student writes the FINAL ANSWER (progress_score = 1.0), it's ALWAYS useful, even if they skipped steps
 
-Set to FALSE if:
+Set to FALSE ONLY if:
 - Mathematically valid but doesn't progress toward solution (e.g., "x = 4" → "4 = x")
 - Rearrangement without simplification
+- **EXCEPTION**: If progress_score = 1.0, set useful = true (they reached the goal!)
 
 ⚠️ CRITICAL: Evaluate mathematically_correct FIRST, then assess usefulness SEPARATELY.
 NEVER mark mathematically_correct as false just because useful is false.
+Jumping to the correct final answer is ALWAYS both correct AND useful.
 
 PROGRESS SCORES (Descriptive, NOT Prescriptive):
 - 0.3-0.5 = Simplified constants or distributed
@@ -549,9 +552,13 @@ Execute that operation yourself on the starting equation.
 Does your result match what the student wrote?
 
 - If YES → mathematically_correct: true
-- If NO → Is there an alternate valid approach that would give this result?
-  - If YES → mathematically_correct: true
-  - If NO → mathematically_correct: false
+- If NO → Check these scenarios:
+  a) Is there an alternate valid approach that would give this result?
+     - If YES → mathematically_correct: true
+  b) Did the student jump to the FINAL ANSWER (e.g., "x + 8 = 12" → "x = 4")?
+     - If YES and the answer is correct → mathematically_correct: true, useful: true
+     - They can skip intermediate steps!
+  c) Otherwise → mathematically_correct: false
 
 Step 4 - Set validation_confidence:
 - 1.0 = Completely certain about your judgment

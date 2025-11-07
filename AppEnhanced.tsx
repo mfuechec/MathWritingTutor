@@ -693,14 +693,15 @@ export default function App() {
   , [addCompletedStroke, eraseStrokesAtPoint]);
 
   const getValidationIcon = (result: StepValidationResponse) => {
-    if (result.mathematicallyCorrect && result.useful) return '✅';
-    if (result.mathematicallyCorrect) return '⚠️';
+    // If mathematically correct, always show green checkmark
+    // (even if not "useful" - correctness is what matters)
+    if (result.mathematicallyCorrect) return '✅';
     return '❌';
   };
 
   const getValidationColor = (result: StepValidationResponse) => {
-    if (result.mathematicallyCorrect && result.useful) return theme.success;
-    if (result.mathematicallyCorrect) return theme.warning;
+    // If mathematically correct, always show success color
+    if (result.mathematicallyCorrect) return theme.success;
     return theme.error;
   };
 
