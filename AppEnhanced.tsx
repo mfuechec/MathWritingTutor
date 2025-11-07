@@ -24,6 +24,7 @@ import { masteryService } from './src/services/MasteryService';
 import type { MasteryState, ProblemAttempt } from './src/types/mastery';
 import { problemGenerator } from './src/services/ProblemGeneratorService';
 import type { DifficultyLevel } from './src/services/ProblemGeneratorService';
+import { useVoiceCommands } from './src/hooks/useVoiceCommands';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const CANVAS_WIDTH = SCREEN_WIDTH - 40;
@@ -240,6 +241,88 @@ export default function App() {
       console.error('Hint speech failed:', error);
     }
   }, [voiceFeedback]);
+
+  // Voice commands integration
+  const {
+    isListening,
+    startListening,
+    stopListening,
+    error: voiceError
+  } = useVoiceCommands({
+    handlers: {
+      onHint: () => {
+        console.log('📢 Voice command: Request hint');
+        if (currentProblem.hintLibrary) {
+          setShowHintSuggestion(true);
+          const hintKey = Object.keys(currentProblem.hintLibrary)[0];
+          if (hintKey) {
+            const hints = currentProblem.hintLibrary[hintKey];
+            const levelKey = `level${hintLevel}` as keyof typeof hints;
+            const hint = hints[levelKey];
+            if (hint) {
+              setCurrentHint(hint);
+              speakHint(hint);
+            }
+          }
+        } else {
+          speakFeedback("I don't have a hint library for this problem yet.");
+        }
+      },
+      onExplain: async () => {
+        console.log('📢 Voice command: Request explanation');
+        if (previousSteps.length === 0) {
+          speakFeedback("Let's start by writing your first step!");
+          return;
+        }
+
+        const lastStep = previousSteps[previousSteps.length - 1];
+        try {
+          const explanation = await gpt4oValidationAPI.requestExplanation({
+            problem: currentProblem,
+            previousSteps: previousSteps.slice(0, -1),
+            currentStep: lastStep,
+            prompt: "Why does this step work? Explain the mathematical reasoning."
+          });
+          speakFeedback(explanation);
+        } catch (error) {
+          console.error('Explanation request failed:', error);
+          speakFeedback("I'm having trouble generating an explanation right now.");
+        }
+      },
+      onNewProblem: () => {
+        console.log('📢 Voice command: New problem');
+        setShowProblemSelector(true);
+        speakFeedback("Opening problem selector");
+      },
+      onReadProblem: () => {
+        console.log('📢 Voice command: Read problem');
+        const problemText = LatexToSpeech.convert(currentProblem.content);
+        const intro = currentProblem.introductionText ? LatexToSpeech.convert(currentProblem.introductionText) : '';
+        Speech.speak(`${intro} The problem is: ${problemText}`, {
+          language: 'en-US',
+          pitch: 1.0,
+          rate: 0.9,
+        });
+      },
+      onClear: () => {
+        console.log('📢 Voice command: Clear canvas');
+        clearCanvas();
+        speakFeedback("Canvas cleared");
+      },
+    },
+    enableAnswerMode: false,
+    contextualStrings: ['algebra', 'equation', 'solve', 'x', 'variable'],
+  });
+
+  // Handle voice errors
+  useEffect(() => {
+    if (voiceError) {
+      console.error('Voice recognition error:', voiceError);
+      if (voiceError.includes('permission')) {
+        speakFeedback("Microphone permission is required for voice commands.");
+      }
+    }
+  }, [voiceError, speakFeedback]);
 
   const getLineNumber = (y: number): number => Math.floor(y / GUIDE_LINE_SPACING);
 
@@ -806,6 +889,22 @@ export default function App() {
           </TouchableOpacity>
 
           <TouchableOpacity
+            style={[
+              styles.toggleButton,
+              isListening && styles.microphoneListening
+            ]}
+            onPress={() => {
+              if (isListening) {
+                stopListening();
+              } else {
+                startListening();
+              }
+            }}
+          >
+            <Text style={styles.toggleButtonText}>🎤</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
             style={[styles.toggleButton, !darkMode && styles.toggleButtonOff]}
             onPress={toggleDarkMode}
           >
@@ -821,6 +920,13 @@ export default function App() {
                 <Text style={[styles.emptyStateText, { color: theme.textSecondary }]}>
                   ✏️ Write your first step here!
                 </Text>
+              </View>
+            )}
+            {isListening && (
+              <View style={styles.listeningIndicator}>
+                <View style={styles.listeningBadge}>
+                  <Text style={styles.listeningText}>🎤 Listening...</Text>
+                </View>
               </View>
             )}
             <Canvas style={styles.canvas}>
@@ -1257,6 +1363,14 @@ const styles = StyleSheet.create({
   toggleButtonOff: {
     backgroundColor: '#ccc',
   },
+  microphoneListening: {
+    backgroundColor: '#FF5722',
+    shadowColor: '#FF5722',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+    elevation: 8,
+  },
   toggleButtonText: {
     fontSize: 20,
   },
@@ -1285,6 +1399,31 @@ const styles = StyleSheet.create({
   },
   emptyStateText: {
     fontSize: 18,
+    fontWeight: '600',
+  },
+  listeningIndicator: {
+    position: 'absolute',
+    top: 16,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 2,
+    pointerEvents: 'none',
+  },
+  listeningBadge: {
+    backgroundColor: '#FF5722',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    shadowColor: '#FF5722',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  listeningText: {
+    color: '#fff',
+    fontSize: 16,
     fontWeight: '600',
   },
   canvas: {
