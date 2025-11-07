@@ -6,7 +6,7 @@
 import { StatusBar } from 'expo-status-bar';
 import {
   StyleSheet, View, Text, Dimensions, SafeAreaView,
-  TouchableOpacity, ActivityIndicator, ScrollView, Animated, Modal
+  TouchableOpacity, ActivityIndicator, ScrollView, Animated, Modal, Platform
 } from 'react-native';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { Canvas, Path, Skia, SkPath, Line, Group, Circle } from '@shopify/react-native-skia';
