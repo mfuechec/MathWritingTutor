@@ -100,6 +100,16 @@ export default function App() {
   // AI speaking state
   const [isAISpeaking, setIsAISpeaking] = useState<boolean>(false);
 
+  // Validated text animation state
+  const [validatedTexts, setValidatedTexts] = useState<{
+    [lineNum: number]: {
+      text: string;
+      animatedY: Animated.Value;
+      animatedOpacity: Animated.Value;
+      originalY: number;
+    };
+  }>({});
+
   // Animation refs
   const checkmarkAnimations = useRef<{ [key: number]: Animated.Value }>({});
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -328,6 +338,52 @@ export default function App() {
       }).start();
     }
   }, [validationResults, feedbackSlideAnim]);
+
+  // Animate validated text to top corner
+  useEffect(() => {
+    const lineNums = Object.keys(validationResults).map(Number);
+
+    lineNums.forEach((lineNum) => {
+      // Skip if already animated
+      if (validatedTexts[lineNum]) return;
+
+      const result = validationResults[lineNum];
+      if (!result.mathematically_correct || !result.transcribed_expression) return;
+
+      const originalY = lineNum * GUIDE_LINE_SPACING + 32; // +32 for canvas padding
+      const animatedY = new Animated.Value(originalY);
+      const animatedOpacity = new Animated.Value(0);
+
+      const stackIndex = Object.keys(validatedTexts).length;
+
+      // Add to state first
+      setValidatedTexts((prev) => ({
+        ...prev,
+        [lineNum]: {
+          text: result.transcribed_expression,
+          animatedY,
+          animatedOpacity,
+          originalY,
+        },
+      }));
+
+      // Start animations
+      setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(animatedOpacity, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(animatedY, {
+            toValue: 10 + (stackIndex * 35), // Stack validated expressions
+            duration: 600,
+            useNativeDriver: true,
+          }),
+        ]).start();
+      }, 500); // Wait for feedback card to appear first
+    });
+  }, [validationResults, validatedTexts]);
 
   // Speak problem introduction when problem changes
   useEffect(() => {
@@ -1338,6 +1394,24 @@ export default function App() {
                 </>
               )}
             </Canvas>
+
+            {/* Validated Text Overlays - animated to top corner */}
+            {Object.entries(validatedTexts).map(([lineNum, textData]) => (
+              <Animated.View
+                key={`validated-${lineNum}`}
+                style={[
+                  styles.validatedTextOverlay,
+                  {
+                    transform: [{ translateY: textData.animatedY }],
+                    opacity: textData.animatedOpacity,
+                  },
+                ]}
+              >
+                <Text style={[styles.validatedText, { color: theme.text }]}>
+                  {textData.text}
+                </Text>
+              </Animated.View>
+            ))}
           </View>
         </GestureDetector>
 
@@ -1381,7 +1455,7 @@ export default function App() {
                     {isCorrect ? 'Excellent work!' : 'Let\'s think about this...'}
                   </Text>
                   <Text style={[styles.feedbackMessage, { color: isCorrect ? '#047857' : '#92400E' }]}>
-                    {result.feedbackMessage}
+                    {result.feedback_message}
                   </Text>
                 </View>
               </View>
@@ -1389,22 +1463,8 @@ export default function App() {
           );
         })()}
 
-        {/* Action Buttons */}
-        {Object.keys(validationResults).length > 0 ? (
-          // Continue Button - after validation
-          <TouchableOpacity
-            style={[styles.continueButton]}
-            onPress={() => {
-              // Clear canvas for next step
-              clearCanvas();
-              // Reset feedback
-              setValidationResults({});
-            }}
-          >
-            <Text style={styles.continueButtonText}>Continue to Next Step →</Text>
-          </TouchableOpacity>
-        ) : hasUnvalidatedStrokes && !autoValidate ? (
-          // Check My Work Button
+        {/* Check My Work Button */}
+        {hasUnvalidatedStrokes && !autoValidate && (
           <Animated.View style={{ transform: [{ scale: validating ? 1 : pulseAnim }] }}>
             <TouchableOpacity
               style={[styles.submitButton, validating && styles.submitButtonDisabled]}
@@ -1421,7 +1481,7 @@ export default function App() {
               )}
             </TouchableOpacity>
           </Animated.View>
-        ) : null}
+        )}
 
         {/* Old Feedback Section - REMOVE THIS */}
         {false && Object.keys(validationResults).length > 0 && (
@@ -2032,6 +2092,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  // Validated text overlay styles
+  validatedTextOverlay: {
+    position: 'absolute',
+    left: 10,
+    right: 10,
+    zIndex: 100,
+  },
+  validatedText: {
+    fontSize: 24,
+    fontWeight: '600',
+    fontFamily: Platform.OS === 'ios' ? 'Bradley Hand' : 'cursive',
   },
   // Old styles - keep for backward compatibility
   validateButton: {
