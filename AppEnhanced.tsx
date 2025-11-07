@@ -1,33 +1,33 @@
 /**
- * Math Tutor App - Enhanced UI Version
- *
- * All UI improvements implemented:
- * - Enhanced feedback cards with full GPT-4o response
- * - Better validation indicators on canvas
- * - Progress tracking with visual progress bar
- * - Animated checkmarks
- * - "Check Line X" button
- * - Improved problem display
- * - Loading states
- * - Empty states
+ * Math Tutor App - Enhanced Version
+ * Sprint 5-6: Multiple Problems + Problem Generator + Speech + Mastery Tracking
  */
 
 import { StatusBar } from 'expo-status-bar';
 import {
   StyleSheet, View, Text, Dimensions, SafeAreaView,
-  TouchableOpacity, ActivityIndicator, ScrollView, Animated
+  TouchableOpacity, ActivityIndicator, ScrollView, Animated, Modal
 } from 'react-native';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
-import { Canvas, Path, Skia, SkPath, Line, Circle, Group } from '@shopify/react-native-skia';
+import { Canvas, Path, Skia, SkPath, Line, Group, Circle } from '@shopify/react-native-skia';
 import { runOnJS } from 'react-native-reanimated';
 import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
+import * as Speech from 'expo-speech';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { gpt4oValidationAPI } from './src/infrastructure/api/GPT4oValidationAPI';
 import { CanvasImageCapture } from './src/utils/CanvasImageCapture';
+import { LatexToSpeech } from './src/utils/LatexToSpeech';
 import type { Problem, StepValidationResponse } from './src/types';
+import { EASY_PROBLEMS, MEDIUM_PROBLEMS, HARD_PROBLEMS, getSimilarProblem, getHarderProblem } from './src/data/problemLibrary';
+import { StepProgressIndicator } from './src/components/StepProgressIndicator';
+import { masteryService } from './src/services/MasteryService';
+import type { MasteryState, ProblemAttempt } from './src/types/mastery';
+import { problemGenerator } from './src/services/ProblemGeneratorService';
+import type { DifficultyLevel } from './src/services/ProblemGeneratorService';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const CANVAS_WIDTH = SCREEN_WIDTH - 40;
-const CANVAS_HEIGHT = SCREEN_HEIGHT * 0.45; // Use 45% of screen height for canvas
+const CANVAS_HEIGHT = SCREEN_HEIGHT * 0.45;
 
 const GUIDE_LINE_SPACING = 60;
 const GUIDE_LINE_COLOR = '#E0E0E0';
@@ -45,24 +45,6 @@ const COLOR_NAMES = {
   '#CC0000': 'Red',
 };
 
-type ColoredStroke = {
-  path: SkPath;
-  color: string;
-};
-
-const SAMPLE_PROBLEM: Problem = {
-  id: 'sample-1',
-  content: '2x + 3 = 7',
-  contentType: 'text',
-  difficulty: 'easy',
-  skillArea: 'algebra',
-  goalState: {
-    type: 'ISOLATE_VARIABLE',
-    variable: 'x',
-  },
-  hintLibrary: {},
-};
-
 export default function App() {
   // Canvas state
   const [pathStrings, setPathStrings] = useState<string[]>([]);
@@ -71,52 +53,257 @@ export default function App() {
   const [currentPath, setCurrentPath] = useState<SkPath | null>(null);
   const [currentColor, setCurrentColor] = useState<string>(COLORS.BLACK);
   const [showGuideLines, setShowGuideLines] = useState<boolean>(true);
+  const [isErasing, setIsErasing] = useState<boolean>(false);
+  const [eraserPosition, setEraserPosition] = useState<{ x: number; y: number } | null>(null);
 
   // Validation state
   const [validating, setValidating] = useState(false);
   const [validationProgress, setValidationProgress] = useState<string>('');
   const [validationResults, setValidationResults] = useState<{ [lineNumber: number]: StepValidationResponse }>({});
   const [previousSteps, setPreviousSteps] = useState<string[]>([]);
-  const [currentProblem] = useState<Problem>(SAMPLE_PROBLEM);
+  const [stepCorrectness, setStepCorrectness] = useState<boolean[]>([]);
+  const [currentProblem, setCurrentProblem] = useState<Problem>(EASY_PROBLEMS[0]);
   const [feedbackExpanded, setFeedbackExpanded] = useState(true);
+  const [autoValidate, setAutoValidate] = useState<boolean>(false);
+  const [voiceFeedback, setVoiceFeedback] = useState<boolean>(true);
+  const [darkMode, setDarkMode] = useState<boolean>(false);
+  const [currentStep, setCurrentStep] = useState<number>(1);
+  const [completedSteps, setCompletedSteps] = useState<number[]>([]);
+  const [totalStepsEstimate, setTotalStepsEstimate] = useState<number | null>(null); // null = unknown, number = estimated total
+  const lastValidatedLineRef = useRef<number>(-1);
+  const isValidatingRef = useRef<boolean>(false);
 
-  // Animation values
+  // Hint state
+  const [consecutiveIncorrect, setConsecutiveIncorrect] = useState<number>(0);
+  const [showHintSuggestion, setShowHintSuggestion] = useState<boolean>(false);
+  const [hintLevel, setHintLevel] = useState<1 | 2 | 3>(1);
+  const [currentHint, setCurrentHint] = useState<string | null>(null);
+
+  // Problem completion state
+  const [showCompletionModal, setShowCompletionModal] = useState<boolean>(false);
+  const [completionCelebration, setCompletionCelebration] = useState<string>('');
+
+  // Problem selection state
+  const [showProblemSelector, setShowProblemSelector] = useState<boolean>(false);
+
+  // Mastery state
+  const [masteryState, setMasteryState] = useState<MasteryState | null>(null);
+
+  // Animation refs
   const checkmarkAnimations = useRef<{ [key: number]: Animated.Value }>({});
   const pulseAnim = useRef(new Animated.Value(1)).current;
-
   const pathRef = useRef<SkPath | null>(null);
   const colorRef = useRef<string>(COLORS.BLACK);
   const startYRef = useRef<number>(0);
+  const isErasingRef = useRef<boolean>(false);
 
-  // Pulse animation for validate button
+  // Theme colors
+  const theme = darkMode ? {
+    background: '#1e1e1e',
+    surface: '#2d2d2d',
+    text: '#ffffff',
+    textSecondary: '#b0b0b0',
+    border: '#404040',
+    success: '#4CAF50',
+    warning: '#FFC107',
+    error: '#F44336',
+  } : {
+    background: '#f5f5f5',
+    surface: '#ffffff',
+    text: '#333333',
+    textSecondary: '#666666',
+    border: '#e0e0e0',
+    success: '#4CAF50',
+    warning: '#FFC107',
+    error: '#F44336',
+  };
+
+  // Load dark mode preference
+  useEffect(() => {
+    const loadDarkMode = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('darkMode');
+        if (stored !== null) {
+          setDarkMode(stored === 'true');
+        }
+      } catch (error) {
+        console.error('Failed to load dark mode preference:', error);
+      }
+    };
+    loadDarkMode();
+  }, []);
+
+  // Load mastery state
+  useEffect(() => {
+    const loadMastery = async () => {
+      const state = await masteryService.loadMasteryState();
+      setMasteryState(state);
+    };
+    loadMastery();
+  }, [currentProblem.id]);
+
+  // Debug: Track totalStepsEstimate changes
+  useEffect(() => {
+    console.log('🔔 STATE UPDATE: totalStepsEstimate =', totalStepsEstimate);
+  }, [totalStepsEstimate]);
+
+  // Debug: Track currentStep changes
+  useEffect(() => {
+    console.log('🔔 STATE UPDATE: currentStep =', currentStep);
+  }, [currentStep]);
+
+  // Initialize total steps estimate when problem changes
+  useEffect(() => {
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🔄 PROBLEM CHANGED - Initializing Step Estimate');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📋 Problem ID:', currentProblem.id);
+    console.log('📊 Problem Difficulty:', currentProblem.difficulty);
+    console.log('🎯 Problem expectedSteps:', currentProblem.expectedSteps);
+
+    // Use problem's expectedSteps, or fall back to default based on difficulty
+    const getDefaultSteps = (difficulty: string): number => {
+      switch (difficulty) {
+        case 'easy': return 2;
+        case 'medium': return 3;
+        case 'hard': return 4;
+        default: return 3;
+      }
+    };
+
+    const estimate = currentProblem.expectedSteps || getDefaultSteps(currentProblem.difficulty);
+    console.log('✅ Setting totalStepsEstimate to:', estimate);
+    console.log('   (from:', currentProblem.expectedSteps ? 'problem.expectedSteps' : 'difficulty default', ')');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    setTotalStepsEstimate(estimate);
+  }, [currentProblem.id, currentProblem.expectedSteps, currentProblem.difficulty]);
+
+  // Toggle dark mode
+  const toggleDarkMode = useCallback(async () => {
+    const newMode = !darkMode;
+    setDarkMode(newMode);
+    try {
+      await AsyncStorage.setItem('darkMode', String(newMode));
+    } catch (error) {
+      console.error('Failed to save dark mode preference:', error);
+    }
+  }, [darkMode]);
+
+  // Pulse animation
   useEffect(() => {
     const pulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.05,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
+        Animated.timing(pulseAnim, { toValue: 1.05, duration: 1000, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
       ])
     );
     pulse.start();
     return () => pulse.stop();
   }, []);
 
-  const getLineNumber = (y: number): number => {
-    return Math.floor(y / GUIDE_LINE_SPACING);
-  };
+  // Speak problem introduction when problem changes
+  useEffect(() => {
+    if (voiceFeedback && currentProblem.introductionText) {
+      const speakableText = LatexToSpeech.convert(currentProblem.introductionText);
+      Speech.speak(speakableText, {
+        language: 'en-US',
+        pitch: 1.0,
+        rate: 0.9,
+      });
+    }
+  }, [currentProblem.id, voiceFeedback]);
+
+  const speakFeedback = useCallback((message: string) => {
+    if (!voiceFeedback) return;
+    try {
+      const speakableText = LatexToSpeech.convert(message);
+      Speech.speak(speakableText, {
+        language: 'en-US',
+        pitch: 1.0,
+        rate: 0.9,
+      });
+    } catch (error) {
+      console.error('Speech failed:', error);
+    }
+  }, [voiceFeedback]);
+
+  const speakHint = useCallback((hint: string) => {
+    if (!voiceFeedback) return;
+    try {
+      const speakableText = LatexToSpeech.convert(hint);
+      Speech.speak(speakableText, {
+        language: 'en-US',
+        pitch: 0.95,
+        rate: 0.85,
+      });
+    } catch (error) {
+      console.error('Hint speech failed:', error);
+    }
+  }, [voiceFeedback]);
+
+  const getLineNumber = (y: number): number => Math.floor(y / GUIDE_LINE_SPACING);
 
   const addCompletedStroke = useCallback((pathString: string, color: string, lineNumber: number) => {
     setPathStrings(prev => [...prev, pathString]);
     setPathColors(prev => [...prev, color]);
     setPathLineNumbers(prev => [...prev, lineNumber]);
   }, []);
+
+  const eraseStrokesAtPoint = useCallback((x: number, y: number) => {
+    const ERASER_RADIUS = 30; // Radius in pixels for eraser
+
+    // Find strokes to keep (those NOT touched by eraser)
+    const strokesToKeep: number[] = [];
+
+    pathStrings.forEach((pathString, index) => {
+      const path = Skia.Path.MakeFromSVGString(pathString);
+      if (!path) {
+        strokesToKeep.push(index);
+        return;
+      }
+
+      // Check if eraser point is within ERASER_RADIUS of any point on the path
+      let shouldErase = false;
+      const bounds = path.getBounds();
+
+      // Quick bounds check first
+      if (
+        x >= bounds.x - ERASER_RADIUS &&
+        x <= bounds.x + bounds.width + ERASER_RADIUS &&
+        y >= bounds.y - ERASER_RADIUS &&
+        y <= bounds.y + bounds.height + ERASER_RADIUS
+      ) {
+        // More detailed check: sample points along the path
+        const pathLength = path.length();
+        const samples = 20; // Number of points to check
+
+        for (let i = 0; i <= samples; i++) {
+          const t = i / samples;
+          const point = path.getPoint(t * pathLength);
+          const distance = Math.sqrt(
+            Math.pow(point.x - x, 2) + Math.pow(point.y - y, 2)
+          );
+
+          if (distance <= ERASER_RADIUS) {
+            shouldErase = true;
+            break;
+          }
+        }
+      }
+
+      if (!shouldErase) {
+        strokesToKeep.push(index);
+      }
+    });
+
+    // Update state to keep only non-erased strokes
+    if (strokesToKeep.length < pathStrings.length) {
+      setPathStrings(prev => strokesToKeep.map(i => prev[i]));
+      setPathColors(prev => strokesToKeep.map(i => prev[i]));
+      setPathLineNumbers(prev => strokesToKeep.map(i => prev[i]));
+      console.log(`🧹 Erased ${pathStrings.length - strokesToKeep.length} stroke(s)`);
+    }
+  }, [pathStrings]);
 
   const generateGuideLines = () => {
     const lines = [];
@@ -132,9 +319,7 @@ export default function App() {
   const getStrokesByLine = useCallback(() => {
     const lineGroups: { [lineNumber: number]: number[] } = {};
     pathLineNumbers.forEach((lineNum, index) => {
-      if (!lineGroups[lineNum]) {
-        lineGroups[lineNum] = [];
-      }
+      if (!lineGroups[lineNum]) lineGroups[lineNum] = [];
       lineGroups[lineNum].push(index);
     });
     return lineGroups;
@@ -142,15 +327,62 @@ export default function App() {
 
   const strokesByLine = getStrokesByLine();
 
-  const clearCanvas = useCallback(() => {
+  const clearCanvas = useCallback((problem?: Problem) => {
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🧹 CLEAR CANVAS Called');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📥 Problem passed as parameter?', problem ? 'YES' : 'NO');
+    if (problem) {
+      console.log('   Parameter Problem ID:', problem.id);
+      console.log('   Parameter Problem Difficulty:', problem.difficulty);
+      console.log('   Parameter Problem expectedSteps:', problem.expectedSteps);
+    }
+    console.log('📦 Current Problem (from closure):');
+    console.log('   Current Problem ID:', currentProblem.id);
+    console.log('   Current Problem Difficulty:', currentProblem.difficulty);
+    console.log('   Current Problem expectedSteps:', currentProblem.expectedSteps);
+
     setPathStrings([]);
     setPathColors([]);
     setPathLineNumbers([]);
     setValidationResults({});
     setPreviousSteps([]);
-  }, []);
+    setStepCorrectness([]);
+    setCurrentStep(1);
+    setCompletedSteps([]);
 
-  // Get current line number (most recent)
+    // Reset total steps estimate with fallback to difficulty-based defaults
+    // Use provided problem or fall back to current problem
+    const prob = problem || currentProblem;
+    const getDefaultSteps = (difficulty: string): number => {
+      switch (difficulty) {
+        case 'easy': return 2;
+        case 'medium': return 3;
+        case 'hard': return 4;
+        default: return 3;
+      }
+    };
+    const estimate = prob.expectedSteps || getDefaultSteps(prob.difficulty);
+    console.log('🎯 Using problem for estimate:', prob.id);
+    console.log('✅ Setting totalStepsEstimate to:', estimate);
+    console.log('   (from:', prob.expectedSteps ? 'problem.expectedSteps' : 'difficulty default', ')');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    setTotalStepsEstimate(estimate);
+
+    setConsecutiveIncorrect(0);
+    setShowHintSuggestion(false);
+    setHintLevel(1);
+    setCurrentHint(null);
+    lastValidatedLineRef.current = -1;
+  }, [currentProblem]);
+
+  const toggleEraser = useCallback(() => {
+    const newErasingState = !isErasing;
+    setIsErasing(newErasingState);
+    isErasingRef.current = newErasingState;
+    console.log('🖍️ Eraser mode:', newErasingState ? 'ON' : 'OFF');
+  }, [isErasing]);
+
   const getCurrentLineNumber = () => {
     const lineNumbers = Object.keys(strokesByLine).map(Number).sort((a, b) => b - a);
     return lineNumbers.length > 0 ? lineNumbers[0] : null;
@@ -159,70 +391,110 @@ export default function App() {
   const currentLineNumber = getCurrentLineNumber();
   const hasUnvalidatedStrokes = currentLineNumber !== null && !validationResults[currentLineNumber];
 
-  // Calculate progress based on GPT-4o's assessment
   const calculateProgress = () => {
-    // Check if any validation marked the problem as complete
-    const isComplete = Object.values(validationResults).some(r =>
-      r.feedbackMessage?.toLowerCase().includes('solved') ||
-      r.feedbackMessage?.toLowerCase().includes('correct!') &&
-      r.progressScore >= 0.95
-    );
-
-    if (isComplete) {
-      return 100;
-    }
-
-    // Use the highest progress score from all validations
-    const maxProgress = Math.max(
-      0,
-      ...Object.values(validationResults).map(r => r.progressScore || 0)
-    );
-
+    const maxProgress = Math.max(0, ...Object.values(validationResults).map(r => r.progressScore || 0));
     return Math.round(maxProgress * 100);
   };
 
   const progress = calculateProgress();
 
-  /**
-   * Validate the current line
-   */
-  const validateCurrentLine = async () => {
+  // Check if problem is complete
+  const isProblemComplete = progress >= 95 || Object.values(validationResults).some(
+    r => r.progressScore && r.progressScore >= 0.95
+  );
+
+  // Show completion modal when problem is complete
+  useEffect(() => {
+    if (isProblemComplete && !showCompletionModal && previousSteps.length > 0) {
+      const celebration = ['🎉', '🎊', '🌟', '✨', '🏆'][Math.floor(Math.random() * 5)];
+      setCompletionCelebration(celebration);
+      setShowCompletionModal(true);
+
+      // Record completion in mastery service
+      const attempt: ProblemAttempt = {
+        problemId: currentProblem.id,
+        difficulty: currentProblem.difficulty,
+        solved: true,
+        timeSpent: 0,
+        hintsUsed: hintLevel > 1 ? hintLevel - 1 : 0,
+        incorrectAttempts: consecutiveIncorrect,
+        timestamp: new Date(),
+      };
+
+      // Update mastery state asynchronously
+      (async () => {
+        const currentState = await masteryService.loadMasteryState();
+        const newState = masteryService.updateMasteryState(currentState, attempt);
+        await masteryService.saveMasteryState(newState);
+        setMasteryState(newState);
+      })();
+
+      if (voiceFeedback) {
+        Speech.speak("Excellent work! You've solved the problem!", {
+          language: 'en-US',
+          pitch: 1.1,
+          rate: 0.9,
+        });
+      }
+    }
+  }, [isProblemComplete, showCompletionModal, previousSteps.length, currentProblem.id, voiceFeedback, hintLevel]);
+
+  const handleTrySimilar = useCallback(() => {
+    const similarProblem = getSimilarProblem(currentProblem.id);
+    setCurrentProblem(similarProblem);
+    clearCanvas(similarProblem); // Pass new problem to avoid stale closure
+    setShowCompletionModal(false);
+  }, [currentProblem.id, clearCanvas]);
+
+  const handleTryHarder = useCallback(() => {
+    const harderProblem = getHarderProblem(currentProblem.id);
+    setCurrentProblem(harderProblem);
+    clearCanvas(harderProblem); // Pass new problem to avoid stale closure
+    setShowCompletionModal(false);
+  }, [currentProblem.id, clearCanvas]);
+
+  const validateCurrentLine = async (manualTrigger = false) => {
+    if (isValidatingRef.current) {
+      console.log('Validation already in progress, skipping...');
+      return;
+    }
+
     if (!currentLineNumber || validationResults[currentLineNumber]) {
       return;
     }
 
+    if (!manualTrigger && !autoValidate) {
+      return;
+    }
+
     try {
+      isValidatingRef.current = true;
       setValidating(true);
       setValidationProgress('Reading your handwriting...');
 
-      const strokeIndices = strokesByLine[currentLineNumber];
-      const lineStrokes: ColoredStroke[] = strokeIndices.map(idx => {
-        const pathString = pathStrings[idx];
+      // Convert ALL path strings to Skia paths and send full canvas to OCR
+      const allStrokes = pathStrings.map((pathString, idx) => {
         const path = Skia.Path.MakeFromSVGString(pathString);
         return { path: path!, color: pathColors[idx] };
       });
 
-      // Capture image
-      const imageBase64 = await CanvasImageCapture.captureLineAsBase64(
-        lineStrokes,
-        currentLineNumber,
-        GUIDE_LINE_SPACING,
-        { width: CANVAS_WIDTH, height: GUIDE_LINE_SPACING }
+      const imageBase64 = await CanvasImageCapture.captureStrokesAsBase64(
+        allStrokes,
+        { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }
       );
 
       setValidationProgress('Checking your math...');
 
-      // Call GPT-4o
       const response = await gpt4oValidationAPI.validateStep({
         canvasImageBase64: imageBase64,
         problem: currentProblem,
         previousSteps,
         currentStepNumber: previousSteps.length + 1,
+        expectedSolutionSteps: currentProblem.expectedSolutionSteps,
       });
 
       setValidationProgress('Done!');
 
-      // Animate checkmark appearance
       if (!checkmarkAnimations.current[currentLineNumber]) {
         checkmarkAnimations.current[currentLineNumber] = new Animated.Value(0);
       }
@@ -233,63 +505,192 @@ export default function App() {
         friction: 7,
       }).start();
 
-      // Store result
-      setValidationResults(prev => ({
-        ...prev,
-        [currentLineNumber]: response,
-      }));
+      setValidationResults(prev => ({ ...prev, [currentLineNumber]: response }));
 
-      // Add to previous steps for context
-      // Include ALL mathematically correct expressions, not just useful ones
-      // This gives GPT-4o better context for validating subsequent steps
       if (response.mathematicallyCorrect) {
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('✅ STEP VALIDATED - CORRECT');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('📝 Expression:', response.recognizedExpression);
+        console.log('📊 Progress Score:', response.progressScore);
+        console.log('🎯 Estimated Steps Remaining:', response.estimatedStepsRemaining);
+        console.log('🔢 Current Step (before increment):', currentStep);
+
         setPreviousSteps(prev => [...prev, response.recognizedExpression]);
+        setStepCorrectness(prev => [...prev, true]);
+        setCompletedSteps(prev => [...prev, currentStep]);
+        setCurrentStep(prev => {
+          console.log('   Incrementing currentStep from', prev, 'to', prev + 1);
+          return prev + 1;
+        });
+        setConsecutiveIncorrect(0);
+        setShowHintSuggestion(false);
+
+        // Update total steps estimate based on GPT-4o's remaining steps estimate
+        if (response.estimatedStepsRemaining !== undefined) {
+          const newTotal = currentStep + response.estimatedStepsRemaining;
+          console.log('🔄 Updating Total Steps Estimate:');
+          console.log('   Current Step:', currentStep);
+          console.log('   Estimated Remaining:', response.estimatedStepsRemaining);
+          console.log('   Calculated New Total:', newTotal);
+
+          setTotalStepsEstimate(prev => {
+            console.log('   Previous Total Estimate:', prev);
+            if (prev === null) {
+              console.log('   ✅ Setting to new total:', newTotal);
+              return newTotal;
+            }
+            const finalTotal = Math.max(prev, newTotal);
+            console.log('   ✅ Setting to max(prev, newTotal):', finalTotal);
+            return finalTotal;
+          });
+        }
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        speakFeedback(response.feedbackMessage);
+      } else {
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('❌ STEP VALIDATED - INCORRECT');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('📝 Expression:', response.recognizedExpression);
+        console.log('🎯 Validation Confidence:', response.validationConfidence);
+        console.log('❓ Error Type:', response.errorType);
+        console.log('📂 Error Category:', response.errorCategory);
+        console.log('💬 Feedback:', response.feedbackMessage);
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        setStepCorrectness(prev => [...prev, false]);
+        const newConsecutive = consecutiveIncorrect + 1;
+        setConsecutiveIncorrect(newConsecutive);
+
+        if (newConsecutive >= 2 && currentProblem.hintLibrary) {
+          setShowHintSuggestion(true);
+          const hintKey = Object.keys(currentProblem.hintLibrary)[0];
+          if (hintKey) {
+            const hints = currentProblem.hintLibrary[hintKey];
+            const levelKey = `level${hintLevel}` as keyof typeof hints;
+            const hint = hints[levelKey];
+            if (hint) {
+              setCurrentHint(hint);
+              speakHint(hint);
+            }
+          }
+        } else {
+          speakFeedback(response.feedbackMessage);
+        }
       }
 
       setFeedbackExpanded(true);
-      setTimeout(() => setValidating(false), 500);
+      lastValidatedLineRef.current = currentLineNumber;
+      setTimeout(() => {
+        setValidating(false);
+        isValidatingRef.current = false;
+      }, 500);
     } catch (error) {
       console.error('Validation error:', error);
       setValidationProgress('');
       alert(`Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setValidating(false);
+      isValidatingRef.current = false;
     }
   };
 
-  // Drawing gesture
+  // Debug: Log available touch/stylus properties
+  const logTouchProperties = useCallback((event: any) => {
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🖊️ TOUCH EVENT PROPERTIES');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('touchType:', event.touchType);
+    console.log('pointerType:', event.pointerType);
+    console.log('altitudeAngle:', event.altitudeAngle);
+    console.log('azimuthAngle:', event.azimuthAngle);
+    console.log('force:', event.force);
+    console.log('maximumPossibleForce:', event.maximumPossibleForce);
+    console.log('All properties:', Object.keys(event));
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  }, []);
+
+  const handleGenerateProblem = async (difficulty: DifficultyLevel) => {
+    try {
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🎲 GENERATE PROBLEM Requested');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('📊 Requested Difficulty:', difficulty);
+      console.log('⏳ Calling problemGenerator.generateProblem()...');
+
+      setShowProblemSelector(false);
+      const newProblem = await problemGenerator.generateProblem(difficulty);
+
+      console.log('✅ Problem Generated:');
+      console.log('   ID:', newProblem.id);
+      console.log('   Content:', newProblem.content);
+      console.log('   Difficulty:', newProblem.difficulty);
+      console.log('   Expected Steps:', newProblem.expectedSteps);
+      console.log('   Expected Solution Steps:', newProblem.expectedSolutionSteps);
+      console.log('🔄 Setting currentProblem state...');
+
+      setCurrentProblem(newProblem);
+
+      console.log('🧹 Calling clearCanvas with new problem...');
+      clearCanvas(newProblem); // Pass new problem to avoid stale closure
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    } catch (error) {
+      console.error('❌ Problem generation failed:', error);
+      alert('Failed to generate problem. Please try again.');
+    }
+  };
+
   const drawGesture = useMemo(() =>
     Gesture.Pan()
       .averageTouches(true)
       .maxPointers(1)
       .onBegin((e) => {
         'worklet';
-        const path = Skia.Path.Make();
-        path.moveTo(e.x, e.y);
-        pathRef.current = path;
-        startYRef.current = e.y;
-        runOnJS(setCurrentPath)(path);
+        if (isErasingRef.current) {
+          // Eraser mode
+          runOnJS(setEraserPosition)({ x: e.x, y: e.y });
+          runOnJS(eraseStrokesAtPoint)(e.x, e.y);
+        } else {
+          // Draw mode
+          const path = Skia.Path.Make();
+          path.moveTo(e.x, e.y);
+          pathRef.current = path;
+          startYRef.current = e.y;
+          runOnJS(setCurrentPath)(path);
+        }
       })
       .onUpdate((e) => {
         'worklet';
-        if (pathRef.current) {
-          pathRef.current.lineTo(e.x, e.y);
-          runOnJS(setCurrentPath)(pathRef.current.copy());
+        if (isErasingRef.current) {
+          // Eraser mode - continuous erasing while dragging
+          runOnJS(setEraserPosition)({ x: e.x, y: e.y });
+          runOnJS(eraseStrokesAtPoint)(e.x, e.y);
+        } else {
+          // Draw mode
+          if (pathRef.current) {
+            pathRef.current.lineTo(e.x, e.y);
+            runOnJS(setCurrentPath)(pathRef.current.copy());
+          }
         }
       })
       .onEnd(() => {
         'worklet';
-        if (pathRef.current) {
-          const pathString = pathRef.current.toSVGString();
-          const strokeColor = colorRef.current;
-          const lineNumber = Math.floor(startYRef.current / GUIDE_LINE_SPACING);
-          runOnJS(addCompletedStroke)(pathString, strokeColor, lineNumber);
+        if (isErasingRef.current) {
+          // Eraser mode - clear eraser position indicator
+          runOnJS(setEraserPosition)(null);
+        } else {
+          // Draw mode
+          if (pathRef.current) {
+            const pathString = pathRef.current.toSVGString();
+            const strokeColor = colorRef.current;
+            const lineNumber = Math.floor(startYRef.current / GUIDE_LINE_SPACING);
+            runOnJS(addCompletedStroke)(pathString, strokeColor, lineNumber);
+          }
+          pathRef.current = null;
+          runOnJS(setCurrentPath)(null);
         }
-        pathRef.current = null;
-        runOnJS(setCurrentPath)(null);
       })
-  , [addCompletedStroke]);
-
-  const getLineValidation = (lineNumber: number) => validationResults[lineNumber];
+  , [addCompletedStroke, eraseStrokesAtPoint]);
 
   const getValidationIcon = (result: StepValidationResponse) => {
     if (result.mathematicallyCorrect && result.useful) return '✅';
@@ -298,39 +699,48 @@ export default function App() {
   };
 
   const getValidationColor = (result: StepValidationResponse) => {
-    if (result.mathematicallyCorrect && result.useful) return '#4CAF50';
-    if (result.mathematicallyCorrect) return '#FFC107';
-    return '#F44336';
+    if (result.mathematicallyCorrect && result.useful) return theme.success;
+    if (result.mathematicallyCorrect) return theme.warning;
+    return theme.error;
   };
 
   return (
-    <GestureHandlerRootView style={styles.container}>
+    <GestureHandlerRootView style={[styles.container, { backgroundColor: theme.background }]}>
       <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="auto" />
+        <StatusBar style={darkMode ? "light" : "dark"} />
 
-        {/* Enhanced Problem Display */}
-        <View style={styles.problemContainer}>
+        {/* Problem Display */}
+        <View style={[styles.problemContainer, { backgroundColor: theme.surface }]}>
           <View style={styles.problemHeader}>
-            <Text style={styles.problemLabel}>Solve for {currentProblem.goalState.variable}:</Text>
-            <View style={styles.difficultyBadge}>
-              <Text style={styles.difficultyText}>{currentProblem.difficulty}</Text>
+            <View style={styles.problemHeaderLeft}>
+              <Text style={[styles.problemLabel, { color: theme.textSecondary }]}>
+                Solve for {currentProblem.goalState.variable}:
+              </Text>
+              <View style={[styles.difficultyBadge, {
+                backgroundColor: currentProblem.difficulty === 'easy' ? '#4CAF50' :
+                  currentProblem.difficulty === 'medium' ? '#FFC107' : '#F44336'
+              }]}>
+                <Text style={styles.difficultyText}>{currentProblem.difficulty}</Text>
+              </View>
             </View>
+            <TouchableOpacity style={styles.changeProblemButton} onPress={() => setShowProblemSelector(true)}>
+              <Text style={styles.changeProblemButtonText}>📝</Text>
+            </TouchableOpacity>
           </View>
-          <Text style={styles.problemText}>{currentProblem.content}</Text>
+          <Text style={[styles.problemText, { color: theme.text }]}>{currentProblem.content}</Text>
 
-          {/* Progress Bar */}
-          <View style={styles.progressContainer}>
-            <View style={styles.progressBarBackground}>
-              <View style={[styles.progressBarFill, { width: `${progress}%` }]} />
-            </View>
-            <Text style={styles.progressText}>{Math.round(progress)}% complete</Text>
-          </View>
+          {/* Progress Bar - Shows total from problem or dynamically adjusts */}
+          <StepProgressIndicator
+            currentStep={currentStep}
+            totalSteps={totalStepsEstimate || currentStep} // Show current if unknown
+            completedSteps={completedSteps}
+          />
         </View>
 
         {/* Toolbar */}
-        <View style={styles.toolbar}>
+        <View style={[styles.toolbar, { backgroundColor: theme.surface }]}>
           <View style={styles.colorPicker}>
-            <Text style={styles.colorLabel}>Ink:</Text>
+            <Text style={[styles.colorLabel, { color: theme.textSecondary }]}>Ink:</Text>
             <View style={styles.colorButtons}>
               {Object.entries(COLORS).map(([name, color]) => (
                 <TouchableOpacity
@@ -338,21 +748,33 @@ export default function App() {
                   style={[
                     styles.colorButton,
                     { backgroundColor: color },
-                    currentColor === color && styles.colorButtonSelected,
+                    currentColor === color && !isErasing && styles.colorButtonSelected,
                   ]}
                   onPress={() => {
                     setCurrentColor(color);
                     colorRef.current = color;
+                    // Deactivate eraser when selecting a color
+                    if (isErasing) {
+                      setIsErasing(false);
+                      isErasingRef.current = false;
+                    }
                   }}
                 >
-                  {currentColor === color && <View style={styles.checkmark} />}
+                  {currentColor === color && !isErasing && <View style={styles.checkmark} />}
                 </TouchableOpacity>
               ))}
             </View>
-            {currentColor && (
-              <Text style={styles.colorName}>{COLOR_NAMES[currentColor as keyof typeof COLOR_NAMES]}</Text>
-            )}
           </View>
+
+          <TouchableOpacity
+            style={[
+              styles.toggleButton,
+              isErasing && styles.colorButtonSelected
+            ]}
+            onPress={toggleEraser}
+          >
+            <Text style={styles.toggleButtonText}>🧹</Text>
+          </TouchableOpacity>
 
           <TouchableOpacity style={styles.clearButton} onPress={clearCanvas}>
             <Text style={styles.clearButtonText}>🗑️</Text>
@@ -364,31 +786,53 @@ export default function App() {
           >
             <Text style={styles.toggleButtonText}>📏</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.toggleButton, !autoValidate && styles.toggleButtonOff]}
+            onPress={() => setAutoValidate(!autoValidate)}
+          >
+            <Text style={styles.toggleButtonText}>⚡</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.toggleButton, !voiceFeedback && styles.toggleButtonOff]}
+            onPress={() => {
+              setVoiceFeedback(!voiceFeedback);
+              if (voiceFeedback) Speech.stop();
+            }}
+          >
+            <Text style={styles.toggleButtonText}>{voiceFeedback ? '🔊' : '🔇'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.toggleButton, !darkMode && styles.toggleButtonOff]}
+            onPress={toggleDarkMode}
+          >
+            <Text style={styles.toggleButtonText}>{darkMode ? '🌙' : '☀️'}</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Canvas */}
         <GestureDetector gesture={drawGesture}>
-          <View style={styles.canvasContainer}>
+          <View style={[styles.canvasContainer, { backgroundColor: theme.surface }]}>
             {pathStrings.length === 0 && (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateText}>✏️ Write your first step here!</Text>
-                <Text style={styles.emptyStateHint}>Use your finger or stylus to write</Text>
+                <Text style={[styles.emptyStateText, { color: theme.textSecondary }]}>
+                  ✏️ Write your first step here!
+                </Text>
               </View>
             )}
             <Canvas style={styles.canvas}>
-              {/* Guide lines with numbers */}
               {showGuideLines && guideLines.map((line) => (
-                <Group key={line.key}>
-                  <Line
-                    p1={{ x: 0, y: line.y }}
-                    p2={{ x: CANVAS_WIDTH, y: line.y }}
-                    color={GUIDE_LINE_COLOR}
-                    strokeWidth={GUIDE_LINE_WIDTH}
-                  />
-                </Group>
+                <Line
+                  key={line.key}
+                  p1={{ x: 0, y: line.y }}
+                  p2={{ x: CANVAS_WIDTH, y: line.y }}
+                  color={GUIDE_LINE_COLOR}
+                  strokeWidth={GUIDE_LINE_WIDTH}
+                />
               ))}
 
-              {/* User strokes */}
               {pathStrings.map((pathString, index) => {
                 const path = Skia.Path.MakeFromSVGString(pathString);
                 if (!path) return null;
@@ -405,8 +849,7 @@ export default function App() {
                 );
               })}
 
-              {/* Current path */}
-              {currentPath && (
+              {currentPath && !isErasing && (
                 <Path
                   path={currentPath}
                   color={currentColor}
@@ -417,35 +860,54 @@ export default function App() {
                 />
               )}
 
-              {/* Validation indicators */}
-              {Object.entries(validationResults).map(([lineNumStr, result]) => {
-                const lineNum = parseInt(lineNumStr);
-                const y = (lineNum + 0.5) * GUIDE_LINE_SPACING;
-                const x = CANVAS_WIDTH - 50;
-                const color = getValidationColor(result);
-
-                return (
-                  <Group key={`validation-${lineNum}`}>
-                    <Circle
-                      cx={x}
-                      cy={y}
-                      r={20}
-                      color={color}
-                      opacity={0.9}
-                    />
-                  </Group>
-                );
-              })}
+              {/* Eraser indicator */}
+              {isErasing && eraserPosition && (
+                <>
+                  {/* Outer circle - eraser boundary */}
+                  <Circle
+                    cx={eraserPosition.x}
+                    cy={eraserPosition.y}
+                    r={30}
+                    color="rgba(255, 100, 100, 0.3)"
+                    style="stroke"
+                    strokeWidth={2}
+                  />
+                  {/* Inner circle - center dot */}
+                  <Circle
+                    cx={eraserPosition.x}
+                    cy={eraserPosition.y}
+                    r={3}
+                    color="rgba(255, 100, 100, 0.6)"
+                  />
+                </>
+              )}
             </Canvas>
           </View>
         </GestureDetector>
 
-        {/* Enhanced Validation Button */}
-        {hasUnvalidatedStrokes && (
+        {/* Hint Banner */}
+        {showHintSuggestion && currentHint && (
+          <View style={[styles.hintBanner, { backgroundColor: theme.warning }]}>
+            <View style={styles.hintHeader}>
+              <Text style={styles.hintIcon}>💡</Text>
+              <Text style={styles.hintLabel}>Need a hint? (Level {hintLevel})</Text>
+              <TouchableOpacity
+                style={styles.hintCloseButton}
+                onPress={() => setShowHintSuggestion(false)}
+              >
+                <Text style={styles.hintCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.hintText}>{currentHint}</Text>
+          </View>
+        )}
+
+        {/* Validation Button */}
+        {hasUnvalidatedStrokes && !autoValidate && (
           <Animated.View style={{ transform: [{ scale: validating ? 1 : pulseAnim }] }}>
             <TouchableOpacity
               style={[styles.validateButton, validating && styles.validateButtonDisabled]}
-              onPress={validateCurrentLine}
+              onPress={() => validateCurrentLine(true)}
               disabled={validating}
             >
               {validating ? (
@@ -456,29 +918,23 @@ export default function App() {
               ) : (
                 <>
                   <Text style={styles.validateButtonIcon}>✓</Text>
-                  <Text style={styles.validateButtonText}>
-                    Check Line {currentLineNumber + 1}
-                  </Text>
+                  <Text style={styles.validateButtonText}>Check My Work</Text>
                 </>
               )}
             </TouchableOpacity>
           </Animated.View>
         )}
 
-        {/* Enhanced Feedback Section */}
+        {/* Feedback Section */}
         {Object.keys(validationResults).length > 0 && (
-          <View style={styles.feedbackSection}>
-            <View style={styles.feedbackHeader}>
-              <Text style={styles.feedbackHeaderText}>
+          <View style={[styles.feedbackSection, { backgroundColor: theme.surface }]}>
+            <View style={[styles.feedbackHeader, { borderBottomColor: theme.border }]}>
+              <Text style={[styles.feedbackHeaderText, { color: theme.text }]}>
                 Feedback ({Object.keys(validationResults).length})
               </Text>
             </View>
 
-            <ScrollView
-              style={styles.feedbackScroll}
-              contentContainerStyle={styles.feedbackScrollContent}
-              showsVerticalScrollIndicator={true}
-            >
+            <ScrollView style={styles.feedbackScroll} contentContainerStyle={styles.feedbackScrollContent}>
               {Object.entries(validationResults)
                 .sort((a, b) => parseInt(b[0]) - parseInt(a[0]))
                 .map(([lineNum, result]) => (
@@ -494,18 +950,18 @@ export default function App() {
                     ]}
                   >
                     <View style={styles.feedbackCardHeader}>
-                      <Text style={styles.feedbackIcon}>
-                        {getValidationIcon(result)}
-                      </Text>
+                      <Text style={styles.feedbackIcon}>{getValidationIcon(result)}</Text>
                       <View style={styles.feedbackTitleContainer}>
-                        <Text style={styles.feedbackTitle}>
+                        <Text style={[styles.feedbackTitle, { color: theme.text }]}>
                           {result.mathematicallyCorrect && result.useful
                             ? 'Correct & Useful!'
                             : result.mathematicallyCorrect
                             ? 'Think About It'
                             : 'Not Quite Right'}
                         </Text>
-                        <Text style={styles.feedbackLine}>Line {parseInt(lineNum) + 1}</Text>
+                        <Text style={[styles.feedbackLine, { color: theme.textSecondary }]}>
+                          Line {parseInt(lineNum) + 1}
+                        </Text>
                       </View>
                     </View>
 
@@ -513,74 +969,176 @@ export default function App() {
                       <View style={styles.recognizedContainer}>
                         <Text style={styles.recognizedLabel}>You wrote:</Text>
                         <Text style={styles.recognizedText}>{result.recognizedExpression}</Text>
-                        <Text style={styles.confidenceText}>
-                          Confidence: {Math.round(result.recognitionConfidence * 100)}%
-                        </Text>
                       </View>
                     )}
 
-                    <Text style={styles.feedbackMessage}>{result.feedbackMessage}</Text>
-
-                    {result.nudgeMessage && (
-                      <View style={styles.nudgeContainer}>
-                        <Text style={styles.nudgeIcon}>💭</Text>
-                        <Text style={styles.nudgeMessage}>{result.nudgeMessage}</Text>
-                      </View>
-                    )}
-
-                    {result.suggestedHint && (
-                      <View style={styles.hintContainer}>
-                        <Text style={styles.hintIcon}>💡</Text>
-                        <View>
-                          <Text style={styles.hintLevel}>Hint (Level {result.suggestedHint.level}):</Text>
-                          <Text style={styles.hintText}>{result.suggestedHint.text}</Text>
-                        </View>
-                      </View>
-                    )}
-
-                    {result.progressScore !== undefined && (
-                      <View style={styles.stepProgressContainer}>
-                        <Text style={styles.stepProgressLabel}>Step Progress:</Text>
-                        <View style={styles.stepProgressBar}>
-                          <View
-                            style={[
-                              styles.stepProgressFill,
-                              { width: `${result.progressScore * 100}%` }
-                            ]}
-                          />
-                        </View>
-                        <Text style={styles.stepProgressText}>
-                          {Math.round(result.progressScore * 100)}%
-                        </Text>
-                      </View>
-                    )}
+                    <Text style={[styles.feedbackMessage, { color: theme.text }]}>
+                      {result.feedbackMessage}
+                    </Text>
                   </View>
                 ))}
             </ScrollView>
           </View>
         )}
 
-        {/* Info Bar */}
-        <View style={styles.infoContainer}>
-          <Text style={styles.info}>
-            Steps: {previousSteps.length} | Strokes: {pathStrings.length}
-          </Text>
-        </View>
+        {/* Problem Selector Modal */}
+        <Modal
+          visible={showProblemSelector}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowProblemSelector(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { backgroundColor: theme.surface }]}>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>Choose a Problem</Text>
+
+              <ScrollView style={styles.problemList}>
+                <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Library Problems</Text>
+                <View style={styles.difficultyGroup}>
+                  <Text style={[styles.difficultyGroupTitle, { color: theme.text }]}>Easy</Text>
+                  {EASY_PROBLEMS.map(problem => (
+                    <TouchableOpacity
+                      key={problem.id}
+                      style={[styles.problemItem, { borderColor: theme.border }]}
+                      onPress={() => {
+                        setCurrentProblem(problem);
+                        clearCanvas(problem); // Pass problem to avoid stale closure
+                        setShowProblemSelector(false);
+                      }}
+                    >
+                      <Text style={[styles.problemItemText, { color: theme.text }]}>
+                        {problem.content}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <View style={styles.difficultyGroup}>
+                  <Text style={[styles.difficultyGroupTitle, { color: theme.text }]}>Medium</Text>
+                  {MEDIUM_PROBLEMS.map(problem => (
+                    <TouchableOpacity
+                      key={problem.id}
+                      style={[styles.problemItem, { borderColor: theme.border }]}
+                      onPress={() => {
+                        setCurrentProblem(problem);
+                        clearCanvas(problem); // Pass problem to avoid stale closure
+                        setShowProblemSelector(false);
+                      }}
+                    >
+                      <Text style={[styles.problemItemText, { color: theme.text }]}>
+                        {problem.content}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <View style={styles.difficultyGroup}>
+                  <Text style={[styles.difficultyGroupTitle, { color: theme.text }]}>Hard</Text>
+                  {HARD_PROBLEMS.map(problem => (
+                    <TouchableOpacity
+                      key={problem.id}
+                      style={[styles.problemItem, { borderColor: theme.border }]}
+                      onPress={() => {
+                        setCurrentProblem(problem);
+                        clearCanvas(problem); // Pass problem to avoid stale closure
+                        setShowProblemSelector(false);
+                      }}
+                    >
+                      <Text style={[styles.problemItemText, { color: theme.text }]}>
+                        {problem.content}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Generate New</Text>
+                <View style={styles.generateButtons}>
+                  <TouchableOpacity
+                    style={[styles.generateButton, { backgroundColor: '#4CAF50' }]}
+                    onPress={() => handleGenerateProblem('easy')}
+                  >
+                    <Text style={styles.generateButtonText}>Easy</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.generateButton, { backgroundColor: '#FFC107' }]}
+                    onPress={() => handleGenerateProblem('medium')}
+                  >
+                    <Text style={styles.generateButtonText}>Medium</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.generateButton, { backgroundColor: '#F44336' }]}
+                    onPress={() => handleGenerateProblem('hard')}
+                  >
+                    <Text style={styles.generateButtonText}>Hard</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => setShowProblemSelector(false)}
+              >
+                <Text style={styles.closeButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Completion Modal */}
+        <Modal
+          visible={showCompletionModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowCompletionModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { backgroundColor: theme.surface }]}>
+              <Text style={styles.celebrationEmoji}>{completionCelebration}</Text>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>Problem Complete!</Text>
+              <Text style={[styles.completionMessage, { color: theme.textSecondary }]}>
+                You solved it in {previousSteps.length} steps!
+              </Text>
+
+              {masteryState && (
+                <View style={styles.masteryInfo}>
+                  <Text style={[styles.masteryText, { color: theme.textSecondary }]}>
+                    Mastery: {(masteryState.masteryLevels[currentProblem.difficulty] * 100).toFixed(0)}%
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.completionButtons}>
+                <TouchableOpacity
+                  style={[styles.completionButton, { backgroundColor: '#4CAF50' }]}
+                  onPress={handleTrySimilar}
+                >
+                  <Text style={styles.completionButtonText}>Try Similar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.completionButton, { backgroundColor: '#F44336' }]}
+                  onPress={handleTryHarder}
+                >
+                  <Text style={styles.completionButtonText}>Try Harder</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.completionButton, { backgroundColor: '#2196F3' }]}
+                  onPress={() => setShowCompletionModal(false)}
+                >
+                  <Text style={styles.completionButtonText}>Choose Problem</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  safeArea: {
-    flex: 1,
-  },
+  container: { flex: 1 },
+  safeArea: { flex: 1 },
   problemContainer: {
-    backgroundColor: '#fff',
     padding: 20,
     marginHorizontal: 20,
     marginTop: 10,
@@ -597,13 +1155,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  problemHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
   problemLabel: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#666',
   },
   difficultyBadge: {
-    backgroundColor: '#4CAF50',
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 12,
@@ -614,38 +1175,27 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'capitalize',
   },
+  changeProblemButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#2196F3',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  changeProblemButtonText: {
+    fontSize: 20,
+  },
   problemText: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#333',
     marginBottom: 16,
-  },
-  progressContainer: {
-    marginTop: 8,
-  },
-  progressBarBackground: {
-    height: 8,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#4CAF50',
-    borderRadius: 4,
-  },
-  progressText: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 4,
-    textAlign: 'right',
   },
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
     paddingHorizontal: 20,
-    backgroundColor: '#fff',
     marginHorizontal: 20,
     marginTop: 12,
     borderRadius: 12,
@@ -660,7 +1210,6 @@ const styles = StyleSheet.create({
   colorLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#666',
   },
   colorButtons: {
     flexDirection: 'row',
@@ -684,11 +1233,6 @@ const styles = StyleSheet.create({
     height: 14,
     borderRadius: 7,
     backgroundColor: '#fff',
-  },
-  colorName: {
-    fontSize: 12,
-    color: '#666',
-    fontWeight: '500',
   },
   clearButton: {
     backgroundColor: '#f44336',
@@ -720,7 +1264,6 @@ const styles = StyleSheet.create({
     marginTop: 12,
     borderRadius: 16,
     overflow: 'hidden',
-    backgroundColor: '#fff',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
@@ -742,16 +1285,44 @@ const styles = StyleSheet.create({
   emptyStateText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#999',
-    marginBottom: 8,
-  },
-  emptyStateHint: {
-    fontSize: 14,
-    color: '#bbb',
   },
   canvas: {
     width: CANVAS_WIDTH,
     height: CANVAS_HEIGHT,
+  },
+  hintBanner: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    padding: 16,
+    borderRadius: 12,
+  },
+  hintHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  hintIcon: {
+    fontSize: 24,
+    marginRight: 8,
+  },
+  hintLabel: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  hintCloseButton: {
+    padding: 4,
+  },
+  hintCloseText: {
+    fontSize: 18,
+    color: '#666',
+    fontWeight: 'bold',
+  },
+  hintText: {
+    fontSize: 13,
+    color: '#333',
+    lineHeight: 18,
   },
   validateButton: {
     backgroundColor: '#4CAF50',
@@ -790,7 +1361,6 @@ const styles = StyleSheet.create({
   feedbackSection: {
     marginHorizontal: 20,
     marginTop: 12,
-    backgroundColor: '#fff',
     borderRadius: 16,
     overflow: 'hidden',
     shadowColor: '#000',
@@ -804,22 +1374,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    backgroundColor: '#f9f9f9',
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
   },
   feedbackHeaderText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
-  },
-  feedbackHeaderIcon: {
-    fontSize: 12,
-    color: '#666',
   },
   feedbackScroll: {
-    maxHeight: 400,
-    minHeight: 150,
+    maxHeight: 300,
   },
   feedbackScrollContent: {
     paddingBottom: 20,
@@ -853,11 +1415,9 @@ const styles = StyleSheet.create({
   feedbackTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#333',
   },
   feedbackLine: {
     fontSize: 12,
-    color: '#666',
     marginTop: 2,
   },
   recognizedContainer: {
@@ -877,85 +1437,116 @@ const styles = StyleSheet.create({
     color: '#333',
     fontFamily: 'monospace',
   },
-  confidenceText: {
-    fontSize: 11,
-    color: '#999',
-    marginTop: 4,
-  },
   feedbackMessage: {
     fontSize: 15,
-    color: '#333',
     lineHeight: 22,
-    marginBottom: 12,
   },
-  nudgeContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255, 193, 7, 0.1)',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 12,
-    gap: 8,
-  },
-  nudgeIcon: {
-    fontSize: 20,
-  },
-  nudgeMessage: {
+  modalOverlay: {
     flex: 1,
-    fontSize: 14,
-    color: '#856404',
-    fontStyle: 'italic',
-  },
-  hintContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(33, 150, 243, 0.1)',
-    padding: 12,
-    borderRadius: 8,
-    gap: 8,
-  },
-  hintIcon: {
-    fontSize: 20,
-  },
-  hintLevel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1976D2',
-    marginBottom: 4,
-  },
-  hintText: {
-    fontSize: 14,
-    color: '#1976D2',
-  },
-  stepProgressContainer: {
-    marginTop: 12,
-  },
-  stepProgressLabel: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 4,
-  },
-  stepProgressBar: {
-    height: 6,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  stepProgressFill: {
-    height: '100%',
-    backgroundColor: '#2196F3',
-    borderRadius: 3,
-  },
-  stepProgressText: {
-    fontSize: 11,
-    color: '#666',
-    marginTop: 4,
-    textAlign: 'right',
-  },
-  infoContainer: {
-    padding: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  info: {
-    fontSize: 12,
-    color: '#999',
+  modalContent: {
+    width: '90%',
+    maxHeight: '80%',
+    borderRadius: 20,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  problemList: {
+    maxHeight: 500,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+    marginBottom: 12,
+  },
+  difficultyGroup: {
+    marginBottom: 20,
+  },
+  difficultyGroupTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  problemItem: {
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 8,
+  },
+  problemItemText: {
+    fontSize: 16,
+  },
+  generateButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
+  generateButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  generateButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  closeButton: {
+    backgroundColor: '#666',
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 12,
+  },
+  closeButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  celebrationEmoji: {
+    fontSize: 64,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  completionMessage: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  masteryInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 24,
+  },
+  masteryText: {
+    fontSize: 14,
+  },
+  completionButtons: {
+    gap: 12,
+  },
+  completionButton: {
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  completionButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

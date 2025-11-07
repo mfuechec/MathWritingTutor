@@ -34,11 +34,33 @@ export interface MathExpression {
 // Problem Types
 // ============================================================================
 
-export type GoalType = 'ISOLATE_VARIABLE' | 'SIMPLIFY' | 'EVALUATE';
+export type ProblemType =
+  | 'linear_equation'           // Single variable linear equation: ax + b = c
+  | 'system_of_equations'       // Two equations with two variables
+  | 'inequality'                // Linear inequality: ax + b < c
+  | 'quadratic_equation'        // Quadratic: ax² + bx + c = 0
+  | 'rational_expression';      // Equation with fractions: (x+a)/(x+b) = c
+
+export type AnswerFormat =
+  | 'integer'                   // Whole numbers: 5, -3, 0
+  | 'decimal'                   // Decimal numbers: 3.5, -2.75
+  | 'simple_fraction'           // Simple fractions: 1/2, 3/4
+  | 'complex_fraction'          // Complex fractions: 5/12, -7/15
+  | 'radical'                   // Radicals: √2, 3√5
+  | 'ordered_pair'              // For systems: (x, y) = (2, 3)
+  | 'interval';                 // For inequalities: x < 5, x ≥ -2
+
+export type GoalType =
+  | 'ISOLATE_VARIABLE'          // Solve for a variable
+  | 'SIMPLIFY'                  // Simplify expression
+  | 'EVALUATE'                  // Calculate numerical result
+  | 'SOLVE_SYSTEM'              // Solve system of equations
+  | 'SOLVE_INEQUALITY';         // Solve inequality
 
 export interface GoalState {
   type: GoalType;
   variable?: string; // For ISOLATE_VARIABLE
+  variables?: string[]; // For SOLVE_SYSTEM (multiple variables)
   targetForm?: string; // Expected final form
 }
 
@@ -52,13 +74,21 @@ export interface HintLibrary {
 
 export interface Problem {
   id: string;
-  content: string; // LaTeX or plain text
-  contentType: 'latex' | 'text';
+  content: string; // LaTeX or plain text (can be multi-line for systems)
+  contentType?: 'latex' | 'text';
+  problemType: ProblemType; // Type of math problem
   difficulty: 'easy' | 'medium' | 'hard';
   skillArea: string;
-  goalState: GoalState;
-  hintLibrary: HintLibrary;
+  goalState: GoalState & {
+    targetValue?: number; // For generated problems
+  };
+  answerFormat: AnswerFormat; // Expected format of the answer
+  introductionText?: string; // Socratic-style conversational intro
+  contextType?: 'abstract' | 'applied' | 'real-world'; // Problem presentation style
+  hintLibrary?: HintLibrary;
   imageUrl?: string;
+  expectedSteps?: number; // How many steps the problem should take
+  expectedSolutionSteps?: string[]; // Model solution path (e.g., ["2x + 3 - 3 = 7 - 3", "2x = 4", "x = 2"])
 }
 
 // ============================================================================
@@ -173,5 +203,7 @@ export interface StepValidationResponse {
     level: HintLevel;
     text: string;
   };
+  estimatedStepsRemaining?: number; // How many more steps to reach solution
+  validationConfidence?: number; // Confidence in mathematical validation (0-1)
   rawResponse?: string;
 }

@@ -13,7 +13,8 @@ import { StyleSheet, View, Text, Dimensions, SafeAreaView, TouchableOpacity, Act
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { Canvas, Path, Skia, SkPath, Line, Rect } from '@shopify/react-native-skia';
 import { runOnJS } from 'react-native-reanimated';
-import { useState, useRef, useMemo, useCallback } from 'react';
+import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
+import * as Speech from 'expo-speech';
 import { gpt4oValidationAPI } from './src/infrastructure/api/GPT4oValidationAPI';
 import { CanvasImageCapture } from './src/utils/CanvasImageCapture';
 import type { Problem, StepValidationResponse } from './src/types';
@@ -66,6 +67,9 @@ export default function App() {
   const [validationResults, setValidationResults] = useState<{ [lineNumber: number]: StepValidationResponse }>({});
   const [previousSteps, setPreviousSteps] = useState<string[]>([]);
   const [currentProblem] = useState<Problem>(SAMPLE_PROBLEM);
+  const [autoValidate, setAutoValidate] = useState<boolean>(true);
+  const [voiceFeedback, setVoiceFeedback] = useState<boolean>(true);
+  const lastValidatedLineRef = useRef<number>(-1);
 
   const pathRef = useRef<SkPath | null>(null);
   const colorRef = useRef<string>(COLORS.BLACK);
@@ -112,24 +116,52 @@ export default function App() {
     setPathLineNumbers([]);
     setValidationResults({});
     setPreviousSteps([]);
+    lastValidatedLineRef.current = -1;
+    Speech.stop(); // Stop any ongoing speech
   }, []);
+
+  /**
+   * Speak feedback message using text-to-speech
+   */
+  const speakFeedback = useCallback((message: string) => {
+    if (!voiceFeedback) return;
+
+    // Stop any ongoing speech first
+    Speech.stop();
+
+    // Speak the feedback
+    Speech.speak(message, {
+      language: 'en-US',
+      pitch: 1.0,
+      rate: 0.9, // Slightly slower for clarity
+    });
+  }, [voiceFeedback]);
 
   /**
    * Validate the most recent line using GPT-4o Vision
    */
-  const validateCurrentLine = async () => {
+  const validateCurrentLine = async (manualTrigger = false) => {
     try {
       setValidating(true);
 
       // Find the most recent line number
       const lineNumbers = Object.keys(strokesByLine).map(Number).sort((a, b) => b - a);
       if (lineNumbers.length === 0) {
-        alert('Please write something first!');
+        if (manualTrigger) {
+          alert('Please write something first!');
+        }
         setValidating(false);
         return;
       }
 
       const currentLineNumber = lineNumbers[0];
+
+      // Skip if already validated and not manually triggered
+      if (!manualTrigger && lastValidatedLineRef.current === currentLineNumber) {
+        setValidating(false);
+        return;
+      }
+
       const strokeIndices = strokesByLine[currentLineNumber];
 
       console.log(`Validating line ${currentLineNumber} with ${strokeIndices.length} strokes`);
@@ -172,18 +204,43 @@ export default function App() {
         [currentLineNumber]: response,
       }));
 
+      // Mark this line as validated
+      lastValidatedLineRef.current = currentLineNumber;
+
       // If correct, add to previous steps
       if (response.mathematicallyCorrect && response.useful) {
         setPreviousSteps(prev => [...prev, response.recognizedExpression]);
       }
 
+      // Speak the feedback
+      speakFeedback(response.feedbackMessage);
+
       setValidating(false);
     } catch (error) {
       console.error('Validation error:', error);
-      alert(`Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      const errorMessage = `Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      if (manualTrigger) {
+        alert(errorMessage);
+      }
       setValidating(false);
     }
   };
+
+  /**
+   * Auto-validate after a delay when new strokes are added
+   */
+  useEffect(() => {
+    if (!autoValidate || validating || pathStrings.length === 0) {
+      return;
+    }
+
+    // Debounce: wait 1.5 seconds after the last stroke before validating
+    const timer = setTimeout(() => {
+      validateCurrentLine(false);
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [pathStrings.length, autoValidate, validating]);
 
   // Drawing gesture
   const drawGesture = useMemo(() =>
@@ -273,6 +330,29 @@ export default function App() {
               {showGuideLines ? '📏' : '📏'}
             </Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.toggleButton, autoValidate && styles.toggleButtonActive]}
+            onPress={() => setAutoValidate(!autoValidate)}
+          >
+            <Text style={styles.toggleButtonText}>
+              {autoValidate ? '⚡' : '⚡'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.toggleButton, voiceFeedback && styles.toggleButtonActive]}
+            onPress={() => {
+              setVoiceFeedback(!voiceFeedback);
+              if (voiceFeedback) {
+                Speech.stop();
+              }
+            }}
+          >
+            <Text style={styles.toggleButtonText}>
+              {voiceFeedback ? '🔊' : '🔇'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Canvas */}
@@ -356,7 +436,7 @@ export default function App() {
         {/* Validation Button */}
         <TouchableOpacity
           style={[styles.validateButton, validating && styles.validateButtonDisabled]}
-          onPress={validateCurrentLine}
+          onPress={() => validateCurrentLine(true)}
           disabled={validating}
         >
           {validating ? (
@@ -365,7 +445,9 @@ export default function App() {
               <Text style={styles.validateButtonText}>Validating...</Text>
             </>
           ) : (
-            <Text style={styles.validateButtonText}>✓ Check My Work</Text>
+            <Text style={styles.validateButtonText}>
+              {autoValidate ? '🔄 Re-check' : '✓ Check My Work'}
+            </Text>
           )}
         </TouchableOpacity>
 
@@ -509,6 +591,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 6,
+  },
+  toggleButtonActive: {
+    backgroundColor: '#4CAF50',
   },
   toggleButtonText: {
     fontSize: 16,

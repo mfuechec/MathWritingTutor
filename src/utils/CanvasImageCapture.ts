@@ -29,37 +29,64 @@ export class CanvasImageCapture {
   ): Promise<string> {
     const { width, height, backgroundColor = '#FFFFFF' } = options;
 
+    // Validate strokes exist
+    if (!strokes || strokes.length === 0) {
+      console.warn('⚠️ No strokes to capture - returning empty image');
+    }
+
+    // QUALITY IMPROVEMENT: 1.5x resolution for balanced OCR accuracy and speed
+    const SCALE_FACTOR = 1.5;
+    const scaledWidth = width * SCALE_FACTOR;
+    const scaledHeight = height * SCALE_FACTOR;
+
     try {
-      // Create an offscreen surface
-      const surface = Skia.Surface.Make(width, height);
+      // Create an offscreen surface at higher resolution
+      const surface = Skia.Surface.Make(scaledWidth, scaledHeight);
       if (!surface) {
         throw new Error('Failed to create Skia surface');
       }
 
       const canvas = surface.getCanvas();
 
+      // Scale the canvas to draw at higher resolution
+      canvas.scale(SCALE_FACTOR, SCALE_FACTOR);
+
       // Fill background
       canvas.clear(Skia.Color(backgroundColor));
 
-      // Draw all strokes
+      // Draw all strokes with improved anti-aliasing and OCR-optimized settings
       const paint = Skia.Paint();
-      paint.setStyle(0); // Fill
-      paint.setStrokeWidth(2);
+      paint.setStyle(1); // Stroke (not Fill) - IMPORTANT for proper path rendering
+      paint.setStrokeWidth(4.5); // Optimized for OCR readability and file size
       paint.setAntiAlias(true);
+      // Add more smoothing for better quality
+      paint.setStrokeCap(1); // Round caps
+      paint.setStrokeJoin(1); // Round joins
 
       for (const stroke of strokes) {
         paint.setColor(Skia.Color(stroke.color));
         canvas.drawPath(stroke.path, paint);
       }
 
-      // Get image snapshot
+      // Get image snapshot at higher resolution
       const image = surface.makeImageSnapshot();
       if (!image) {
         throw new Error('Failed to create image snapshot');
       }
 
-      // Encode to PNG
+      // Encode to PNG (will be at 2x resolution)
       const pngData = image.encodeToBase64();
+
+      console.log(`📸 Image captured: ${scaledWidth}x${scaledHeight} (${SCALE_FACTOR}x scale)`);
+      console.log(`📊 Image size: ${pngData.length} bytes`);
+
+      // DEBUG: Log the data URL so you can paste into browser to inspect the image
+      // This helps diagnose OCR issues by showing exactly what Mathpix receives
+      if (pngData.length < 1000) {
+        console.warn('⚠️ Image is very small (<1KB), might be blank or nearly empty');
+      }
+      console.log('🔍 To inspect the image being sent to OCR, paste this into your browser:');
+      console.log(`data:image/png;base64,${pngData.substring(0, 200)}...`);
 
       return pngData;
     } catch (error) {
