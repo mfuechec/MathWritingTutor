@@ -4,7 +4,7 @@
  * Supports push-to-talk activation with on-device recognition
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   ExpoSpeechRecognitionModule,
   useSpeechRecognitionEvent,
@@ -54,6 +54,14 @@ export const useVoiceCommands = ({
   const [recognizedCommand, setRecognizedCommand] = useState<VoiceRecognitionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [permissionStatus, setPermissionStatus] = useState<'granted' | 'denied' | 'undetermined'>('undetermined');
+
+  // Use ref to always access latest handlers (fixes stale closure bug)
+  const handlersRef = useRef(handlers);
+
+  // Update ref when handlers change
+  useEffect(() => {
+    handlersRef.current = handlers;
+  }, [handlers]);
 
   /**
    * Request microphone and speech recognition permissions
@@ -145,8 +153,8 @@ export const useVoiceCommands = ({
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     // If in answer mode, pass raw transcript to handler
-    if (enableAnswerMode && handlers.onAnswer) {
-      handlers.onAnswer(transcript);
+    if (enableAnswerMode && handlersRef.current.onAnswer) {
+      handlersRef.current.onAnswer(transcript);
       setRecognizedCommand({
         command: 'unknown',
         transcript,
@@ -167,19 +175,19 @@ export const useVoiceCommands = ({
     // Execute command handler
     switch (command) {
       case 'new_problem':
-        handlers.onNewProblem?.();
+        handlersRef.current.onNewProblem?.();
         break;
       case 'read_problem':
-        handlers.onReadProblem?.();
+        handlersRef.current.onReadProblem?.();
         break;
       case 'clear':
-        handlers.onClear?.();
+        handlersRef.current.onClear?.();
         break;
       default:
         // Not a system command - treat as conversational question for Socratic tutor
         console.log('💬 Treating as conversational question:', transcript);
-        if (handlers.onQuestion) {
-          handlers.onQuestion(transcript);
+        if (handlersRef.current.onQuestion) {
+          handlersRef.current.onQuestion(transcript);
         } else {
           console.warn('⚠️ No onQuestion handler provided for conversational input');
           setError('Voice conversation not configured');
