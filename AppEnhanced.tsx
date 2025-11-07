@@ -394,7 +394,7 @@ export default function App() {
         clearCanvas();
         speakFeedback("Canvas cleared");
       },
-      onAnswer: (answer: string) => {
+      onAnswer: async (answer: string) => {
         console.log('📢 Student answer received:', answer);
 
         // Notify dialogue manager
@@ -402,16 +402,31 @@ export default function App() {
 
         // Exit answer mode
         setWaitingForAnswer(false);
+        const questionAsked = currentQuestion;
         setCurrentQuestion(null);
 
-        // Acknowledge the answer
-        speakFeedback("Thanks for sharing your thoughts!");
+        // Validate the answer using Socratic service
+        if (questionAsked) {
+          try {
+            const response = await socraticQuestionService.respondToStudentQuestion({
+              studentQuestion: `You asked me: "${questionAsked}". My answer is: "${answer}"`,
+              problem: currentProblem,
+              previousSteps,
+              currentStep: previousSteps[previousSteps.length - 1],
+            });
 
-        // For now, just log the answer. In the future, this could:
-        // - Evaluate the answer for correctness
-        // - Generate follow-up questions
-        // - Adjust teaching strategy based on understanding
-        console.log('💭 Student said:', answer);
+            // Speak the validation response
+            speakFeedback(response);
+          } catch (error) {
+            console.error('Failed to validate answer:', error);
+            speakFeedback("Thanks for sharing your thoughts!");
+          }
+        } else {
+          // No question context, just acknowledge
+          speakFeedback("Thanks for sharing your thoughts!");
+        }
+
+        console.log('💭 Student said:', answer, 'in response to:', questionAsked);
       },
       onQuestion: async (question: string) => {
         console.log('💬 Conversational question received:', question);
