@@ -49,6 +49,62 @@ const COLOR_NAMES = {
   '#CC0000': 'Red',
 };
 
+// FeedbackCard Component - Extracted for proper re-rendering
+const FeedbackCard = ({ message, isCorrect, theme, slideAnim }: {
+  message: string;
+  isCorrect: boolean;
+  theme: any;
+  slideAnim: Animated.Value;
+}) => {
+  console.log('🎨 FeedbackCard rendering with message:', message);
+
+  return (
+    <Animated.View
+      style={[
+        {
+          marginHorizontal: 20,
+          marginTop: 16,
+          marginBottom: 16,
+        },
+        { transform: [{ translateY: slideAnim }] }
+      ]}
+    >
+      <View style={{
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        padding: 20,
+        paddingHorizontal: 24,
+        borderRadius: 16,
+        borderWidth: 2,
+        backgroundColor: isCorrect ? theme.successBg : theme.warningBg,
+        borderColor: isCorrect ? theme.success : theme.warning,
+      }}>
+        <View style={{
+          width: 32,
+          height: 32,
+          borderRadius: 16,
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: isCorrect ? theme.success : theme.warning,
+          marginRight: 12,
+        }}>
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '600' }}>
+            {isCorrect ? '✓' : '?'}
+          </Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 16, fontWeight: '700', marginBottom: 8, color: isCorrect ? '#065F46' : '#92400E' }}>
+            {isCorrect ? 'Excellent work!' : 'Let\'s think about this...'}
+          </Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: '#065F46' }}>
+            {message}
+          </Text>
+        </View>
+      </View>
+    </Animated.View>
+  );
+};
+
 export default function App() {
   // Canvas state
   const [pathStrings, setPathStrings] = useState<string[]>([]);
@@ -1437,6 +1493,7 @@ export default function App() {
           const latestLineNum = Math.max(...Object.keys(validationResults).map(Number));
           const result = validationResults[latestLineNum];
           const isCorrect = result.mathematicallyCorrect;
+          const feedbackText = String(result.feedbackMessage || '');
 
           // DEBUG: Log the actual result object
           console.log('🐛 DEBUG - Feedback Card Render:');
@@ -1446,29 +1503,16 @@ export default function App() {
           console.log('   feedbackMessage:', result.feedbackMessage);
           console.log('   feedback_message:', result.feedback_message);
           console.log('   mathematicallyCorrect:', result.mathematicallyCorrect);
+          console.log('   feedbackText extracted:', feedbackText);
 
           return (
-            <Animated.View style={[styles.feedbackCardContainer, { transform: [{ translateY: feedbackSlideAnim }] }]}>
-              <View style={[
-                styles.feedbackCard,
-                {
-                  backgroundColor: isCorrect ? theme.successBg : theme.warningBg,
-                  borderColor: isCorrect ? theme.success : theme.warning,
-                }
-              ]}>
-                <View style={[styles.feedbackIconCircle, { backgroundColor: isCorrect ? theme.success : theme.warning }]}>
-                  <Text style={styles.feedbackIconText}>{isCorrect ? '✓' : '?'}</Text>
-                </View>
-                <View style={styles.feedbackContent}>
-                  <Text style={[styles.feedbackTitle, { color: isCorrect ? theme.successText : theme.warningText }]}>
-                    {isCorrect ? 'Excellent work!' : 'Let\'s think about this...'}
-                  </Text>
-                  <Text style={[styles.feedbackMessage, { color: isCorrect ? '#047857' : '#92400E' }]}>
-                    {result.feedbackMessage || result.feedback_message || '[No feedback message]'}
-                  </Text>
-                </View>
-              </View>
-            </Animated.View>
+            <FeedbackCard
+              key={`feedback-${latestLineNum}`}
+              message={feedbackText}
+              isCorrect={isCorrect}
+              theme={theme}
+              slideAnim={feedbackSlideAnim}
+            />
           );
         })()}
 
@@ -1556,7 +1600,7 @@ export default function App() {
           onRequestClose={() => setShowProblemSelector(false)}
         >
           <View style={styles.modalOverlay}>
-            <View style={[styles.modalContent, { backgroundColor: theme.surface }]}>
+            <View style={[styles.modalContent, { backgroundColor: theme.cardBg }]}>
               <Text style={[styles.modalTitle, { color: theme.text }]}>Choose a Problem</Text>
 
               <ScrollView style={styles.problemList}>
@@ -1659,7 +1703,7 @@ export default function App() {
           onRequestClose={() => setShowCompletionModal(false)}
         >
           <View style={styles.modalOverlay}>
-            <View style={[styles.modalContent, { backgroundColor: theme.surface }]}>
+            <View style={[styles.modalContent, { backgroundColor: theme.cardBg }]}>
               <Text style={styles.celebrationEmoji}>{completionCelebration}</Text>
               <Text style={[styles.modalTitle, { color: theme.text }]}>Problem Complete!</Text>
               <Text style={[styles.completionMessage, { color: theme.textSecondary }]}>
@@ -2042,6 +2086,7 @@ const styles = StyleSheet.create({
   },
   feedbackContent: {
     flex: 1,
+    flexShrink: 1,
   },
   feedbackTitle: {
     fontSize: 16,
