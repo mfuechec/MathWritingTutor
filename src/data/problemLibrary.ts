@@ -22,6 +22,11 @@ export const EASY_PROBLEMS: Problem[] = [
     answerFormat: 'integer',
     introductionText: 'This is a linear equation with one variable, x. How can we start isolating x to find its value?',
     contextType: 'abstract',
+    expectedSolutionSteps: [
+      "2x + 3 = 7",
+      "2x = 4",
+      "x = 2"
+    ],
     hintLibrary: {
       subtract_constant: {
         level1: 'What operation helps remove the constant term?',
@@ -50,6 +55,11 @@ export const EASY_PROBLEMS: Problem[] = [
     answerFormat: 'integer',
     introductionText: 'We have a simple equation here. What operation do you think will help us find the value of x?',
     contextType: 'abstract',
+    expectedSolutionSteps: [
+      "5x = 15",
+      "x = 15 / 5",
+      "x = 3"
+    ],
     hintLibrary: {
       divide_coefficient: {
         level1: 'What operation undoes multiplication?',
@@ -73,6 +83,11 @@ export const EASY_PROBLEMS: Problem[] = [
     answerFormat: 'integer',
     introductionText: 'Looking at this equation, x plus 8 equals 12. How might we isolate x on one side?',
     contextType: 'abstract',
+    expectedSolutionSteps: [
+      "x + 8 = 12",
+      "x = 12 - 8",
+      "x = 4"
+    ],
     hintLibrary: {
       subtract_constant: {
         level1: 'What operation undoes addition?',
@@ -96,6 +111,11 @@ export const EASY_PROBLEMS: Problem[] = [
     answerFormat: 'integer',
     introductionText: 'Here we have x minus 5 equals 9. What do you think is the first step to solve for x?',
     contextType: 'abstract',
+    expectedSolutionSteps: [
+      "x - 5 = 9",
+      "x = 9 + 5",
+      "x = 14"
+    ],
     hintLibrary: {
       add_constant: {
         level1: 'What operation undoes subtraction?',
@@ -123,6 +143,11 @@ export const MEDIUM_PROBLEMS: Problem[] = [
     answerFormat: 'integer',
     introductionText: 'This is a two-step equation. Can you see what steps we might need to take to isolate x?',
     contextType: 'abstract',
+    expectedSolutionSteps: [
+      "3x + 7 = 22",
+      "3x = 15",
+      "x = 5"
+    ],
     hintLibrary: {
       subtract_constant: {
         level1: 'Start by eliminating the constant term',
@@ -151,6 +176,11 @@ export const MEDIUM_PROBLEMS: Problem[] = [
     answerFormat: 'integer',
     introductionText: 'We have 4x minus 9 equals 15. What strategy would you use to solve this two-step equation?',
     contextType: 'abstract',
+    expectedSolutionSteps: [
+      "4x - 9 = 15",
+      "4x = 24",
+      "x = 6"
+    ],
     hintLibrary: {
       add_constant: {
         level1: 'First, eliminate the constant',
@@ -179,6 +209,12 @@ export const MEDIUM_PROBLEMS: Problem[] = [
     answerFormat: 'integer',
     introductionText: 'This problem involves the distributive property. How should we handle the parentheses?',
     contextType: 'abstract',
+    expectedSolutionSteps: [
+      "2(x + 3) = 14",
+      "2x + 6 = 14",
+      "2x = 8",
+      "x = 4"
+    ],
     hintLibrary: {
       distribute: {
         level1: 'Start by expanding the parentheses',
@@ -207,6 +243,12 @@ export const MEDIUM_PROBLEMS: Problem[] = [
     answerFormat: 'integer',
     introductionText: 'Notice that x appears on both sides of the equation. How might we gather all the x terms together?',
     contextType: 'abstract',
+    expectedSolutionSteps: [
+      "5x + 2 = 3x + 10",
+      "5x = 3x + 8",
+      "2x = 8",
+      "x = 4"
+    ],
     hintLibrary: {
       collect_variables: {
         level1: 'Get all x terms on one side',
@@ -239,6 +281,14 @@ export const HARD_PROBLEMS: Problem[] = [
     answerFormat: 'simple_fraction',
     introductionText: 'This is a multi-step problem with distribution. What do you think should be our first move?',
     contextType: 'abstract',
+    expectedSolutionSteps: [
+      "2(3x - 5) + 4 = 22",
+      "6x - 10 + 4 = 22",
+      "6x - 6 = 22",
+      "6x = 28",
+      "x = 28/6",
+      "x = 14/3"
+    ],
     hintLibrary: {
       distribute: {
         level1: 'Start by expanding the parentheses',
@@ -272,6 +322,14 @@ export const HARD_PROBLEMS: Problem[] = [
     answerFormat: 'integer',
     introductionText: 'We have parentheses on both sides here. Can you see a strategy to approach this?',
     contextType: 'abstract',
+    expectedSolutionSteps: [
+      "4(x + 2) = 2(x + 8)",
+      "4x + 8 = 2x + 16",
+      "4x = 2x + 8",
+      "4x - 2x = 8",
+      "2x = 8",
+      "x = 4"
+    ],
     hintLibrary: {
       distribute_both: {
         level1: 'Expand both sides using distributive property',
@@ -305,6 +363,13 @@ export const HARD_PROBLEMS: Problem[] = [
     answerFormat: 'integer',
     introductionText: 'This is quite a complex equation! We have multiple sets of parentheses to deal with. Where should we begin?',
     contextType: 'abstract',
+    expectedSolutionSteps: [
+      "3(2x - 1) - 2(x + 3) = 11",
+      "6x - 3 - 2x - 6 = 11",
+      "4x - 9 = 11",
+      "4x = 20",
+      "x = 5"
+    ],
     hintLibrary: {
       distribute_both: {
         level1: 'Expand both parentheses',
@@ -338,6 +403,17 @@ export const SYSTEM_PROBLEMS: Problem[] = [
     introductionText: 'We have a system of two equations here. Can you think of a way to eliminate one variable?',
     contextType: 'abstract',
     expectedSteps: 3,
+    expectedSolutionSteps: [
+      "x + y = 5",
+      "x - y = 1",
+      "(x + y) + (x - y) = 5 + 1",
+      "2x = 6",
+      "x = 3",
+      "x + y = 5",
+      "3 + y = 5",
+      "y = 2",
+      "(3, 2)"
+    ],
     goalState: {
       type: 'SOLVE_SYSTEM',
       variables: ['x', 'y'],
@@ -355,6 +431,21 @@ export const SYSTEM_PROBLEMS: Problem[] = [
     introductionText: 'Looking at these two equations, what strategy might help us solve for both x and y?',
     contextType: 'abstract',
     expectedSteps: 4,
+    expectedSolutionSteps: [
+      "2x + y = 7",
+      "x - y = 2",
+      "x = y + 2",
+      "2x + y = 7",
+      "2(y + 2) + y = 7",
+      "2y + 4 + y = 7",
+      "3y + 4 = 7",
+      "3y = 3",
+      "y = 1",
+      "x = y + 2",
+      "x = 1 + 2",
+      "x = 3",
+      "(3, 1)"
+    ],
     goalState: {
       type: 'SOLVE_SYSTEM',
       variables: ['x', 'y'],
@@ -376,6 +467,11 @@ export const INEQUALITY_PROBLEMS: Problem[] = [
     introductionText: 'This is an inequality problem. How is solving an inequality similar to solving an equation?',
     contextType: 'abstract',
     expectedSteps: 2,
+    expectedSolutionSteps: [
+      "3x - 5 < 10",
+      "3x < 15",
+      "x < 5"
+    ],
     goalState: {
       type: 'SOLVE_INEQUALITY',
       variable: 'x',
@@ -393,6 +489,11 @@ export const INEQUALITY_PROBLEMS: Problem[] = [
     introductionText: 'We need to solve for x and express the answer as an inequality. What should we do first?',
     contextType: 'abstract',
     expectedSteps: 2,
+    expectedSolutionSteps: [
+      "2x + 7 ≥ 15",
+      "2x ≥ 8",
+      "x ≥ 4"
+    ],
     goalState: {
       type: 'SOLVE_INEQUALITY',
       variable: 'x',
@@ -414,6 +515,12 @@ export const QUADRATIC_PROBLEMS: Problem[] = [
     introductionText: 'This is a quadratic equation. What methods do you know for solving quadratics?',
     contextType: 'abstract',
     expectedSteps: 3,
+    expectedSolutionSteps: [
+      "x² + 5x + 6 = 0",
+      "(x + 2)(x + 3) = 0",
+      "x + 2 = 0 or x + 3 = 0",
+      "x = -2 or x = -3"
+    ],
     goalState: {
       type: 'ISOLATE_VARIABLE',
       variable: 'x',
@@ -431,6 +538,13 @@ export const QUADRATIC_PROBLEMS: Problem[] = [
     introductionText: 'This quadratic can be solved by factoring as a difference of squares. Can you see the pattern?',
     contextType: 'abstract',
     expectedSteps: 2,
+    expectedSolutionSteps: [
+      "x² - 4 = 0",
+      "x² = 4",
+      "x = ±√4",
+      "x = ±2",
+      "x = 2 or x = -2"
+    ],
     goalState: {
       type: 'ISOLATE_VARIABLE',
       variable: 'x',
@@ -452,6 +566,11 @@ export const RATIONAL_PROBLEMS: Problem[] = [
     introductionText: 'This equation involves a fraction. How should we approach equations with rational expressions?',
     contextType: 'abstract',
     expectedSteps: 2,
+    expectedSolutionSteps: [
+      "(x + 2) / 3 = 4",
+      "x + 2 = 12",
+      "x = 10"
+    ],
     goalState: {
       type: 'ISOLATE_VARIABLE',
       variable: 'x',
@@ -469,6 +588,13 @@ export const RATIONAL_PROBLEMS: Problem[] = [
     introductionText: 'We have two fractions with different denominators here. What strategy can help us combine them?',
     contextType: 'abstract',
     expectedSteps: 3,
+    expectedSolutionSteps: [
+      "x/2 + x/3 = 5",
+      "3x/6 + 2x/6 = 5",
+      "5x/6 = 5",
+      "5x = 30",
+      "x = 6"
+    ],
     goalState: {
       type: 'ISOLATE_VARIABLE',
       variable: 'x',
