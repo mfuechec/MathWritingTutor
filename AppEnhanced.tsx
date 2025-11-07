@@ -348,7 +348,7 @@ export default function App() {
       if (validatedTexts[lineNum]) return;
 
       const result = validationResults[lineNum];
-      if (!result.mathematically_correct || !result.transcribed_expression) return;
+      if (!result.mathematicallyCorrect || !result.recognizedExpression) return;
 
       const originalY = lineNum * GUIDE_LINE_SPACING + 32; // +32 for canvas padding
       const animatedY = new Animated.Value(originalY);
@@ -360,7 +360,7 @@ export default function App() {
       setValidatedTexts((prev) => ({
         ...prev,
         [lineNum]: {
-          text: result.transcribed_expression,
+          text: result.recognizedExpression,
           animatedY,
           animatedOpacity,
           originalY,
@@ -1455,7 +1455,7 @@ export default function App() {
                     {isCorrect ? 'Excellent work!' : 'Let\'s think about this...'}
                   </Text>
                   <Text style={[styles.feedbackMessage, { color: isCorrect ? '#047857' : '#92400E' }]}>
-                    {result.feedback_message}
+                    {result.feedbackMessage}
                   </Text>
                 </View>
               </View>
