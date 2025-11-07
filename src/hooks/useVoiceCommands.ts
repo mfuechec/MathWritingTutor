@@ -30,6 +30,7 @@ export interface VoiceCommandHandlers {
   onReadProblem?: () => void;
   onClear?: () => void;
   onAnswer?: (answer: string) => void; // For answering prompts
+  onQuestion?: (question: string) => void; // For conversational questions to Socratic tutor
 }
 
 export interface VoiceRecognitionResult {
@@ -95,35 +96,31 @@ export const useVoiceCommands = ({
 
   /**
    * Parse command from transcript
+   * Returns 'unknown' if not a system command (will be treated as conversational question)
    */
   const parseCommand = useCallback((transcript: string): VoiceCommand => {
     const lower = transcript.toLowerCase().trim();
 
-    // Check for hint/help/stuck commands
-    if (lower.includes('hint') || lower.includes('help') || lower.includes('stuck')) {
-      return 'hint';
-    }
-
-    // Check for explanation commands
-    if (lower.includes('explain') || lower.includes('why')) {
-      return 'explain';
-    }
+    // Only parse system commands - everything else is conversational
+    // System commands are explicit actions like starting new problem or clearing
 
     // Check for new problem commands
-    if (lower.includes('new problem') || lower.includes('different problem')) {
+    if (lower.includes('new problem') || lower.includes('different problem') || lower.includes('next problem')) {
       return 'new_problem';
     }
 
     // Check for read problem commands
-    if (lower.includes('read') || lower.includes('repeat')) {
+    if (lower.includes('read problem') || lower.includes('read the problem') || lower.includes('repeat problem')) {
       return 'read_problem';
     }
 
     // Check for clear commands
-    if (lower.includes('clear')) {
+    if (lower.includes('clear canvas') || lower === 'clear') {
       return 'clear';
     }
 
+    // Everything else is conversational (questions, requests for help, etc.)
+    // These will be handled by the Socratic tutor
     return 'unknown';
   }, []);
 
@@ -141,8 +138,11 @@ export const useVoiceCommands = ({
     const transcript = result.transcript;
     const confidence = result.confidence || 0.5;
 
-    console.log('📝 Transcript:', transcript);
-    console.log('🎯 Confidence:', confidence);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🎤 VOICE RECOGNITION HEARD:');
+    console.log(`   📝 "${transcript}"`);
+    console.log(`   🎯 Confidence: ${(confidence * 100).toFixed(0)}%`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     // If in answer mode, pass raw transcript to handler
     if (enableAnswerMode && handlers.onAnswer) {
@@ -166,15 +166,6 @@ export const useVoiceCommands = ({
 
     // Execute command handler
     switch (command) {
-      case 'hint':
-      case 'help':
-      case 'stuck':
-        handlers.onHint();
-        break;
-      case 'explain':
-      case 'why':
-        handlers.onExplain();
-        break;
       case 'new_problem':
         handlers.onNewProblem?.();
         break;
@@ -185,8 +176,14 @@ export const useVoiceCommands = ({
         handlers.onClear?.();
         break;
       default:
-        console.warn('⚠️ Unrecognized command:', transcript);
-        setError(`Didn't recognize that command. Try "hint", "explain", or "new problem".`);
+        // Not a system command - treat as conversational question for Socratic tutor
+        console.log('💬 Treating as conversational question:', transcript);
+        if (handlers.onQuestion) {
+          handlers.onQuestion(transcript);
+        } else {
+          console.warn('⚠️ No onQuestion handler provided for conversational input');
+          setError('Voice conversation not configured');
+        }
     }
   });
 
@@ -249,18 +246,33 @@ export const useVoiceCommands = ({
       // Wait a brief moment for TTS to fully stop
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      // Build contextual strings
+      // Build contextual strings for better recognition
       const defaultContextual = [
-        'hint',
-        'help',
-        'stuck',
-        'explain',
-        'why',
+        // System commands
         'new problem',
         'different problem',
+        'next problem',
         'read problem',
-        'repeat',
+        'read the problem',
+        'repeat problem',
         'clear',
+        'clear canvas',
+        // Common question words to improve recognition
+        'what',
+        'how',
+        'why',
+        'when',
+        'should',
+        'can',
+        'is',
+        // Math terms
+        'step',
+        'solve',
+        'simplify',
+        'combine',
+        'isolate',
+        'variable',
+        'equation',
       ];
 
       const allContextual = [...defaultContextual, ...contextualStrings];

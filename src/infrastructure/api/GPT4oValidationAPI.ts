@@ -220,37 +220,64 @@ Respond with ONLY the explanation text (no JSON, no preamble).`,
 
     console.log(`🎭 Using persona: ${personaType}`);
 
-    const response = await this.client.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        {
-          role: 'system',
-          content: this.getSystemPrompt(personaType),
-        },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: prompt,
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:image/png;base64,${request.canvasImageBase64}`,
-                detail: 'auto', // Balanced detail for speed vs accuracy (was 'high')
+    console.log('📡 Calling GPT-4o Vision API...');
+    console.log('📊 Prompt length:', prompt.length, 'chars');
+    console.log('🖼️  Image size:', request.canvasImageBase64.length, 'chars (base64)');
+    console.log('🔑 API Key present:', !!OPENAI_API_KEY);
+    console.log('🔑 API Key length:', OPENAI_API_KEY?.length || 0);
+
+    let response;
+    try {
+      response = await this.client.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: this.getSystemPrompt(personaType),
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: prompt,
               },
-            },
-          ],
-        },
-      ],
-      temperature: 0.1,
-      max_tokens: 500, // Reduced from 800 for faster responses
-      response_format: { type: 'json_object' },
-    });
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:image/png;base64,${request.canvasImageBase64}`,
+                  detail: 'auto', // Balanced detail for speed vs accuracy (was 'high')
+                },
+              },
+            ],
+          },
+        ],
+        temperature: 0.1,
+        max_tokens: 500, // Reduced from 800 for faster responses
+        response_format: { type: 'json_object' },
+      });
+    } catch (apiError: any) {
+      console.error('❌ GPT-4o Vision API call FAILED');
+      console.error('Error name:', apiError?.name);
+      console.error('Error message:', apiError?.message);
+      console.error('Error code:', apiError?.code);
+      console.error('Error status:', apiError?.status);
+      console.error('Error response:', apiError?.response?.data);
+      console.error('Full error:', JSON.stringify(apiError, null, 2));
+      throw new Error(`GPT-4o Vision API failed: ${apiError?.message || 'Unknown error'}`);
+    }
+
+    console.log('✅ Got response from GPT-4o Vision');
+    console.log('📦 Response object:', JSON.stringify(response, null, 2));
+    console.log('📝 Choices array:', response.choices);
+    console.log('🎯 First choice:', response.choices[0]);
 
     const content = response.choices[0]?.message?.content;
+    console.log('💬 Content:', content);
+
     if (!content) {
+      console.error('❌ EMPTY RESPONSE from GPT-4o Vision');
+      console.error('Full response:', JSON.stringify(response, null, 2));
       throw new Error('No response from GPT-4o Vision');
     }
 
@@ -422,8 +449,8 @@ ${personaGuidelines}
 
 RESPONSE FORMAT (JSON only):
 {
-  "transcribed_expression": "string - what you read from the image",
-  "transcription_notes": "string - any observations about handwriting or clarity",
+  "transcribed_expression": "string - the NEWEST expression you read from the image (not the previously validated ones)",
+  "transcription_notes": "string - any observations about handwriting, clarity, or how you identified the newest expression",
   "ocr_confidence": 0-1 (confidence in reading the handwriting),
   "mathematically_correct": boolean,
   "useful": boolean,
@@ -535,30 +562,57 @@ Goal: ${this.describeGoal(problem)}
 Previous steps (already validated):
 ${previousSteps.length > 0 ? previousSteps.map((step, i) => `${i + 1}. ${step}`).join('\n') : 'None (this is the first step)'}
 
-Student's latest work (read from image):
-"${recognizedExpression}"
+CANVAS CONTEXT:
+The image shows the ENTIRE canvas with all student work (both validated and new).
+You already validated ${previousSteps.length} expression(s) shown above.
+
+YOUR TASK:
+Read the NEXT NEW expression that appears on the canvas (the one that comes AFTER the expressions listed above).
+Use your spatial reasoning to identify which handwriting is new vs already validated.
 ${expectedStepsContext}
+
+Student's latest work (to be read from image):
+"${recognizedExpression}"
 
 VALIDATION TASK:
 
-Step 1 - Identify the starting point:
-Starting equation: ${previousSteps.length > 0 ? previousSteps[previousSteps.length - 1] : problem.content}
+Step 0 - Read the newest expression from the canvas:
+First, identify which handwritten expression on the canvas is NEW (not yet validated).
+Look for the expression that comes AFTER the ${previousSteps.length} already-validated expressions listed above.
+Transcribe this newest expression into the "transcribed_expression" field.
+
+Step 1 - Identify potential starting points for validation:
+Most likely: ${previousSteps.length > 0 ? previousSteps[previousSteps.length - 1] : problem.content}
+But also consider: Original problem "${problem.content}" and any other previous steps shown above
 
 Step 2 - Identify what operation the student performed:
 (Examples: distributed, combined like terms, added/subtracted from both sides, multiplied/divided both sides, etc.)
 
 Step 3 - Verify algebraic equivalence:
-Execute that operation yourself on the starting equation.
-Does your result match what the student wrote?
+Check if this step follows logically from ANY valid starting point:
 
+First, check immediate previous step:
+- Does it follow from the most recent equation?
 - If YES → mathematically_correct: true
-- If NO → Check these scenarios:
-  a) Is there an alternate valid approach that would give this result?
+
+If NO, check recovery scenarios (students can recover from mistakes):
+  a) Does it follow from an EARLIER step in the work shown?
+     - Students sometimes skip over an incorrect step and continue from their last correct one
+     - Check if this step could follow from the original problem or any earlier step
      - If YES → mathematically_correct: true
-  b) Did the student jump to the FINAL ANSWER (e.g., "x + 8 = 12" → "x = 4")?
-     - If YES and the answer is correct → mathematically_correct: true, useful: true
-     - They can skip intermediate steps!
-  c) Otherwise → mathematically_correct: false
+
+  b) Is there an alternate valid algebraic approach that would give this result?
+     - If YES → mathematically_correct: true
+
+  c) Did the student jump directly to the FINAL ANSWER?
+     - Check if this is the correct final solution (e.g., "x = 4" for "2x + 3 = 7" → "x = 2")
+     - If YES and algebraically correct → mathematically_correct: true, useful: true
+     - Students can always jump to the final answer if they can do the math mentally
+
+  d) Otherwise → mathematically_correct: false
+
+⚠️ KEY PRINCIPLE: Students should be able to recover from mistakes without penalty.
+If they write one wrong step but then continue correctly, validate the new steps as correct.
 
 Step 4 - Set validation_confidence:
 - 1.0 = Completely certain about your judgment

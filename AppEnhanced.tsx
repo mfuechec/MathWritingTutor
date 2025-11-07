@@ -25,6 +25,9 @@ import type { MasteryState, ProblemAttempt } from './src/types/mastery';
 import { problemGenerator } from './src/services/ProblemGeneratorService';
 import type { DifficultyLevel } from './src/services/ProblemGeneratorService';
 import { useVoiceCommands } from './src/hooks/useVoiceCommands';
+import { useInactivityDetection, getCheckInMessage } from './src/hooks/useInactivityDetection';
+import { socraticQuestionService } from './src/services/SocraticQuestionService';
+import { dialogueManager } from './src/services/DialogueManager';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const CANVAS_WIDTH = SCREEN_WIDTH - 40;
@@ -90,9 +93,15 @@ export default function App() {
   // Mastery state
   const [masteryState, setMasteryState] = useState<MasteryState | null>(null);
 
+  // Answer mode state (for two-way dialogue)
+  const [waitingForAnswer, setWaitingForAnswer] = useState<boolean>(false);
+  const [currentQuestion, setCurrentQuestion] = useState<string | null>(null);
+
   // Animation refs
   const checkmarkAnimations = useRef<{ [key: number]: Animated.Value }>({});
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const answerModePulseAnim = useRef(new Animated.Value(1)).current;
+  const answerBadgeFadeAnim = useRef(new Animated.Value(0)).current;
   const pathRef = useRef<SkPath | null>(null);
   const colorRef = useRef<string>(COLORS.BLACK);
   const startYRef = useRef<number>(0);
@@ -142,6 +151,13 @@ export default function App() {
     };
     loadMastery();
   }, [currentProblem.id]);
+
+  // Configure dialogue manager based on voice feedback setting
+  useEffect(() => {
+    dialogueManager.updateConfig({
+      mode: voiceFeedback ? 'conversational' : 'silent',
+    });
+  }, [voiceFeedback]);
 
   // Debug: Track totalStepsEstimate changes
   useEffect(() => {
@@ -202,6 +218,46 @@ export default function App() {
     return () => pulse.stop();
   }, []);
 
+  // Answer mode pulse animation for microphone button
+  useEffect(() => {
+    if (waitingForAnswer) {
+      const answerPulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(answerModePulseAnim, { toValue: 1.2, duration: 800, useNativeDriver: true }),
+          Animated.timing(answerModePulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+        ])
+      );
+      answerPulse.start();
+      return () => answerPulse.stop();
+    } else {
+      // Reset to normal size
+      Animated.timing(answerModePulseAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [waitingForAnswer, answerModePulseAnim]);
+
+  // Fade animation for answer mode badge
+  useEffect(() => {
+    if (waitingForAnswer) {
+      // Fade in
+      Animated.timing(answerBadgeFadeAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      // Fade out
+      Animated.timing(answerBadgeFadeAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [waitingForAnswer, answerBadgeFadeAnim]);
+
   // Speak problem introduction when problem changes
   useEffect(() => {
     if (voiceFeedback && currentProblem.introductionText) {
@@ -218,13 +274,26 @@ export default function App() {
     if (!voiceFeedback) return;
     try {
       const speakableText = LatexToSpeech.convert(message);
+
+      // Notify dialogue manager that speech is starting
+      dialogueManager.onSpeechStart();
+
       Speech.speak(speakableText, {
         language: 'en-US',
         pitch: 1.0,
         rate: 0.9,
+        onDone: () => {
+          // Notify dialogue manager that speech has ended
+          dialogueManager.onSpeechEnd();
+        },
+        onStopped: () => {
+          // Also handle interruptions
+          dialogueManager.onSpeechEnd();
+        },
       });
     } catch (error) {
       console.error('Speech failed:', error);
+      dialogueManager.onSpeechEnd();
     }
   }, [voiceFeedback]);
 
@@ -241,6 +310,22 @@ export default function App() {
       console.error('Hint speech failed:', error);
     }
   }, [voiceFeedback]);
+
+  /**
+   * Speak a question and optionally wait for student's verbal response
+   */
+  const speakQuestion = useCallback((question: string, expectsAnswer: boolean = false) => {
+    speakFeedback(question);
+
+    if (expectsAnswer) {
+      // Set answer mode after a brief delay (to allow question to finish)
+      setTimeout(() => {
+        setWaitingForAnswer(true);
+        setCurrentQuestion(question);
+        console.log('🎤 Waiting for student answer...');
+      }, 3000); // Wait 3s for question to finish speaking
+    }
+  }, [speakFeedback]);
 
   // Voice commands integration
   const {
@@ -309,8 +394,49 @@ export default function App() {
         clearCanvas();
         speakFeedback("Canvas cleared");
       },
+      onAnswer: (answer: string) => {
+        console.log('📢 Student answer received:', answer);
+
+        // Notify dialogue manager
+        dialogueManager.onStudentResponse(answer);
+
+        // Exit answer mode
+        setWaitingForAnswer(false);
+        setCurrentQuestion(null);
+
+        // Acknowledge the answer
+        speakFeedback("Thanks for sharing your thoughts!");
+
+        // For now, just log the answer. In the future, this could:
+        // - Evaluate the answer for correctness
+        // - Generate follow-up questions
+        // - Adjust teaching strategy based on understanding
+        console.log('💭 Student said:', answer);
+      },
+      onQuestion: async (question: string) => {
+        console.log('💬 Conversational question received:', question);
+
+        try {
+          // Use Socratic service to generate a response
+          const response = await socraticQuestionService.respondToStudentQuestion({
+            studentQuestion: question,
+            problem: currentProblem,
+            previousSteps,
+            currentStep: previousSteps[previousSteps.length - 1],
+          });
+
+          // Record the response in dialogue manager
+          dialogueManager.onStudentResponse(question);
+
+          // Speak the Socratic response
+          speakFeedback(response);
+        } catch (error) {
+          console.error('Failed to generate conversational response:', error);
+          speakFeedback("That's a great question! Let me think about the best way to guide you...");
+        }
+      },
     },
-    enableAnswerMode: false,
+    enableAnswerMode: waitingForAnswer,
     contextualStrings: ['algebra', 'equation', 'solve', 'x', 'variable'],
   });
 
@@ -323,6 +449,49 @@ export default function App() {
       }
     }
   }, [voiceError, speakFeedback]);
+
+  // Inactivity detection with escalating check-ins
+  const { resetInactivity } = useInactivityDetection({
+    checkInIntervals: [45000, 75000, 105000], // 45s, 75s, 105s
+    enabled: voiceFeedback, // Only when voice feedback is on
+    onCheckIn: async (elapsedSeconds, level) => {
+      console.log(`📞 Check-in triggered: Level ${level}, ${elapsedSeconds}s`);
+
+      // Check with dialogue manager if we should respond to this check-in
+      if (!dialogueManager.shouldRespondToCheckIn(elapsedSeconds * 1000, level)) {
+        console.log('🎙️ Skipping check-in: dialogue manager advised against it');
+        return;
+      }
+
+      const checkInMessage = getCheckInMessage(level, elapsedSeconds);
+      speakFeedback(checkInMessage);
+
+      // At higher levels, also generate a Socratic question
+      if (level >= 2 && previousSteps.length > 0) {
+        try {
+          const question = await socraticQuestionService.generateQuestion({
+            problem: currentProblem,
+            previousSteps,
+            questionType: 'on_pause',
+          });
+
+          // Record the question
+          dialogueManager.recordQuestion(question.question, question.expectsAnswer);
+
+          // Speak the question after a brief pause
+          setTimeout(() => speakQuestion(question.question, question.expectsAnswer), 2000);
+        } catch (error) {
+          console.error('Failed to generate check-in question:', error);
+        }
+      }
+    },
+  });
+
+  // Reset inactivity on any interaction
+  const handleInteraction = useCallback(() => {
+    resetInactivity();
+    dialogueManager.onStudentActivity();
+  }, [resetInactivity]);
 
   const getLineNumber = (y: number): number => Math.floor(y / GUIDE_LINE_SPACING);
 
@@ -457,6 +626,14 @@ export default function App() {
     setHintLevel(1);
     setCurrentHint(null);
     lastValidatedLineRef.current = -1;
+
+    // Reset dialogue manager for new problem
+    dialogueManager.reset();
+    console.log('🎙️ Dialogue manager reset for new problem');
+
+    // Reset answer mode
+    setWaitingForAnswer(false);
+    setCurrentQuestion(null);
   }, [currentProblem]);
 
   const toggleEraser = useCallback(() => {
@@ -555,11 +732,15 @@ export default function App() {
       setValidating(true);
       setValidationProgress('Reading your handwriting...');
 
-      // Convert ALL path strings to Skia paths and send full canvas to OCR
+      // Send entire canvas for better OCR context
+      // AI will use sequential reading to identify the newest expression
       const allStrokes = pathStrings.map((pathString, idx) => {
         const path = Skia.Path.MakeFromSVGString(pathString);
         return { path: path!, color: pathColors[idx] };
       });
+
+      console.log(`🎯 Validating with full canvas context (${allStrokes.length} total strokes)`);
+      console.log(`📊 Previously validated: ${previousSteps.length} expressions`);
 
       const imageBase64 = await CanvasImageCapture.captureStrokesAsBase64(
         allStrokes,
@@ -631,6 +812,38 @@ export default function App() {
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
         speakFeedback(response.feedbackMessage);
+
+        // Generate Socratic question after correct step (if not complete)
+        if (response.progressScore < 1.0 && voiceFeedback) {
+          setTimeout(async () => {
+            try {
+              const updatedSteps = [...previousSteps, response.recognizedExpression];
+              const isStrategicMoment = socraticQuestionService.detectStrategicMoment(
+                currentProblem,
+                updatedSteps
+              );
+
+              // Check with dialogue manager if we should ask a question
+              if (dialogueManager.shouldAskQuestion({
+                isStrategicMoment,
+                isCorrectStep: true,
+                consecutiveErrors: 0,
+              })) {
+                const question = await socraticQuestionService.generateQuestion({
+                  problem: currentProblem,
+                  previousSteps: updatedSteps,
+                  questionType: 'after_correct',
+                });
+
+                // Record the question
+                dialogueManager.recordQuestion(question.question, question.expectsAnswer);
+                speakQuestion(question.question, question.expectsAnswer);
+              }
+            } catch (error) {
+              console.error('Failed to generate Socratic question:', error);
+            }
+          }, 2000); // Wait 2s after feedback
+        }
       } else {
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         console.log('❌ STEP VALIDATED - INCORRECT');
@@ -660,6 +873,35 @@ export default function App() {
           }
         } else {
           speakFeedback(response.feedbackMessage);
+
+          // Generate Socratic question after incorrect step if student appears stuck
+          if (newConsecutive >= 2 && voiceFeedback) {
+            setTimeout(async () => {
+              // Check with dialogue manager if we should ask a question
+              if (dialogueManager.shouldAskQuestion({
+                isStrategicMoment: false,
+                isCorrectStep: false,
+                consecutiveErrors: newConsecutive,
+              })) {
+                try {
+                  const question = await socraticQuestionService.generateQuestion({
+                    problem: currentProblem,
+                    previousSteps,
+                    currentStep: response.recognizedExpression,
+                    questionType: 'after_incorrect',
+                    attemptNumber: newConsecutive,
+                    mistakePattern: response.errorType,
+                  });
+
+                  // Record the question
+                  dialogueManager.recordQuestion(question.question, question.expectsAnswer);
+                  speakQuestion(question.question, question.expectsAnswer);
+                } catch (error) {
+                  console.error('Failed to generate Socratic question after incorrect step:', error);
+                }
+              }
+            }, 2500); // Wait 2.5s after feedback
+          }
         }
       }
 
@@ -729,6 +971,9 @@ export default function App() {
       .maxPointers(1)
       .onBegin((e) => {
         'worklet';
+        // Reset inactivity timer on any interaction
+        runOnJS(handleInteraction)();
+
         if (isErasingRef.current) {
           // Eraser mode
           runOnJS(setEraserPosition)({ x: e.x, y: e.y });
@@ -888,21 +1133,28 @@ export default function App() {
             <Text style={styles.toggleButtonText}>{voiceFeedback ? '🔊' : '🔇'}</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[
-              styles.toggleButton,
-              isListening && styles.microphoneListening
-            ]}
-            onPress={() => {
-              if (isListening) {
-                stopListening();
-              } else {
-                startListening();
-              }
+          <Animated.View
+            style={{
+              transform: [{ scale: waitingForAnswer ? answerModePulseAnim : 1 }],
             }}
           >
-            <Text style={styles.toggleButtonText}>🎤</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.toggleButton,
+                isListening && styles.microphoneListening,
+                waitingForAnswer && styles.microphoneWaiting
+              ]}
+              onPress={() => {
+                if (isListening) {
+                  stopListening();
+                } else {
+                  startListening();
+                }
+              }}
+            >
+              <Text style={styles.toggleButtonText}>🎤</Text>
+            </TouchableOpacity>
+          </Animated.View>
 
           <TouchableOpacity
             style={[styles.toggleButton, !darkMode && styles.toggleButtonOff]}
@@ -928,6 +1180,18 @@ export default function App() {
                   <Text style={styles.listeningText}>🎤 Listening...</Text>
                 </View>
               </View>
+            )}
+            {waitingForAnswer && !isListening && (
+              <Animated.View
+                style={[
+                  styles.answerModeIndicator,
+                  { opacity: answerBadgeFadeAnim }
+                ]}
+              >
+                <View style={styles.answerModeBadge}>
+                  <Text style={styles.answerModeText}>💭 Tap 🎤 to respond</Text>
+                </View>
+              </Animated.View>
             )}
             <Canvas style={styles.canvas}>
               {showGuideLines && guideLines.map((line) => (
@@ -1371,6 +1635,14 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
+  microphoneWaiting: {
+    backgroundColor: '#2196F3',
+    shadowColor: '#2196F3',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+    elevation: 8,
+  },
   toggleButtonText: {
     fontSize: 20,
   },
@@ -1422,6 +1694,31 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   listeningText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  answerModeIndicator: {
+    position: 'absolute',
+    top: 16,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 2,
+    pointerEvents: 'none',
+  },
+  answerModeBadge: {
+    backgroundColor: '#2196F3',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    shadowColor: '#2196F3',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  answerModeText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',

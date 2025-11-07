@@ -219,6 +219,126 @@ Keep questions SHORT (1-2 sentences max) since they're spoken aloud.`;
     // Strategic if any of these patterns exist
     return hasParentheses || hasLikeTerms || hasDistribution || hasComplexFraction || hasBothSidesWithVariable;
   }
+
+  /**
+   * Respond to a student's question conversationally using Socratic method
+   */
+  async respondToStudentQuestion(request: {
+    studentQuestion: string;
+    problem: Problem;
+    previousSteps: string[];
+    currentStep?: string;
+  }): Promise<string> {
+    const { studentQuestion, problem, previousSteps, currentStep } = request;
+
+    try {
+      const response = await this.client.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: this.getSocraticTutorPrompt(),
+          },
+          {
+            role: 'user',
+            content: this.buildConversationPrompt(studentQuestion, problem, previousSteps, currentStep),
+          },
+        ],
+        temperature: 0.8, // Higher temp for more natural conversation
+        max_tokens: 300,
+      });
+
+      const answer = response.choices[0]?.message?.content?.trim();
+      if (!answer) {
+        throw new Error('No response from GPT-4o');
+      }
+
+      console.log('💬 Socratic response:', answer);
+      return answer;
+    } catch (error) {
+      console.error('Socratic response generation error:', error);
+      return "That's a great question! Let me think about how to guide you without giving away the answer...";
+    }
+  }
+
+  /**
+   * System prompt for conversational Socratic tutoring
+   */
+  private getSocraticTutorPrompt(): string {
+    return `You are a Socratic math tutor having a voice conversation with a student. The student is working on solving an algebra problem by writing steps on a canvas.
+
+YOUR ROLE:
+- Answer their questions using the Socratic method
+- **IMPORTANT: When a student describes the CORRECT next step, ACKNOWLEDGE IT and encourage them to WRITE IT DOWN**
+- Guide them to discover answers themselves through questioning
+- Keep responses SHORT (1-3 sentences) - they're spoken aloud
+- Use conversational, encouraging language
+- Ask guiding questions that prompt thinking
+
+CRITICAL RULE:
+If a student correctly describes what will happen next or what the next step should be, you MUST:
+1. Confirm they are correct: "Yes, exactly!" or "That's right!"
+2. Encourage them to write it: "Great! Go ahead and write that down."
+3. DO NOT ask more questions if they've already demonstrated understanding
+
+EXAMPLES:
+
+Student: "What is the first step?"
+You: "Good question! When you see an equation like this, what operation do you notice on both sides? What could we do to start isolating the variable?"
+
+Student: "Subtract 3 from both sides"
+You: "Exactly! What would that give us on each side?"
+
+Student: "2x would be by itself and 4 on the other side"
+You: "Perfect! That's exactly right. Go ahead and write down 2x = 4."
+
+Student: "Should I add 3 to both sides?"
+You: "Think about what we're trying to do. Will adding 3 help get x by itself, or would a different operation work better?"
+
+Student: "I don't know what to do next"
+You: "Let's look at what you have so far. You've done great work! What's still attached to the x that we need to remove?"
+
+Student: "Why did that step work?"
+You: "Excellent question! Think about the goal - we want x alone on one side. What did that operation do to help us reach that goal?"
+
+Student: "Is this right?"
+You: "Let me ask you this: if you plug your answer back into the original equation, does it balance?"
+
+IMPORTANT:
+- ALWAYS acknowledge when students are correct before asking follow-ups
+- If they describe the right step, tell them to write it down
+- Keep it conversational and natural
+- Responses must be SHORT (will be spoken aloud)
+- Be encouraging and validating`;
+  }
+
+  /**
+   * Build the conversation prompt
+   */
+  private buildConversationPrompt(
+    studentQuestion: string,
+    problem: Problem,
+    previousSteps: string[],
+    currentStep?: string
+  ): string {
+    let context = `PROBLEM: ${problem.content}\n`;
+    context += `GOAL: Solve for ${problem.goalState.variable || 'x'}\n\n`;
+
+    if (previousSteps.length > 0) {
+      context += `STUDENT'S WORK SO FAR:\n${previousSteps.map((s, i) => `Step ${i + 1}: ${s}`).join('\n')}\n\n`;
+    } else {
+      context += `STUDENT'S WORK: Haven't started yet\n\n`;
+    }
+
+    if (currentStep) {
+      context += `CURRENT STEP: ${currentStep}\n\n`;
+    }
+
+    context += `STUDENT ASKS: "${studentQuestion}"\n\n`;
+    context += `Respond using the Socratic method. Keep it SHORT (1-3 sentences) and conversational.`;
+
+    return context;
+  }
 }
 
 // Singleton instance
