@@ -97,35 +97,56 @@ export default function App() {
   const [waitingForAnswer, setWaitingForAnswer] = useState<boolean>(false);
   const [currentQuestion, setCurrentQuestion] = useState<string | null>(null);
 
+  // AI speaking state
+  const [isAISpeaking, setIsAISpeaking] = useState<boolean>(false);
+
   // Animation refs
   const checkmarkAnimations = useRef<{ [key: number]: Animated.Value }>({});
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const answerModePulseAnim = useRef(new Animated.Value(1)).current;
   const answerBadgeFadeAnim = useRef(new Animated.Value(0)).current;
+  const soundBar1Anim = useRef(new Animated.Value(0.5)).current;
+  const soundBar2Anim = useRef(new Animated.Value(0.5)).current;
+  const soundBar3Anim = useRef(new Animated.Value(0.5)).current;
+  const feedbackSlideAnim = useRef(new Animated.Value(10)).current;
   const pathRef = useRef<SkPath | null>(null);
   const colorRef = useRef<string>(COLORS.BLACK);
   const startYRef = useRef<number>(0);
   const isErasingRef = useRef<boolean>(false);
 
-  // Theme colors
+  // Theme colors - New design tokens
   const theme = darkMode ? {
-    background: '#1e1e1e',
-    surface: '#2d2d2d',
-    text: '#ffffff',
-    textSecondary: '#b0b0b0',
-    border: '#404040',
-    success: '#4CAF50',
-    warning: '#FFC107',
-    error: '#F44336',
+    bg: '#0F1419',
+    cardBg: '#1A1F2E',
+    text: '#FFFFFF',
+    textSecondary: '#9CA3AF',
+    border: '#2D3748',
+    canvasBg: '#1A1F2E',
+    canvasLine: '#2D3748',
+    primary: '#3B82F6',
+    success: '#10B981',
+    successBg: '#D1FAE5',
+    successText: '#065F46',
+    warning: '#F59E0B',
+    warningBg: '#FEF3C7',
+    warningText: '#92400E',
+    error: '#EF4444',
   } : {
-    background: '#f5f5f5',
-    surface: '#ffffff',
-    text: '#333333',
-    textSecondary: '#666666',
-    border: '#e0e0e0',
-    success: '#4CAF50',
-    warning: '#FFC107',
-    error: '#F44336',
+    bg: '#F8F9FA',
+    cardBg: '#FFFFFF',
+    text: '#1A1A1A',
+    textSecondary: '#6B7280',
+    border: '#E5E7EB',
+    canvasBg: '#FFFFFF',
+    canvasLine: '#F3F4F6',
+    primary: '#3B82F6',
+    success: '#10B981',
+    successBg: '#D1FAE5',
+    successText: '#065F46',
+    warning: '#F59E0B',
+    warningBg: '#FEF3C7',
+    warningText: '#92400E',
+    error: '#EF4444',
   };
 
   // Load dark mode preference
@@ -258,6 +279,56 @@ export default function App() {
     }
   }, [waitingForAnswer, answerBadgeFadeAnim]);
 
+  // AI speaking sound bar animations
+  useEffect(() => {
+    if (isAISpeaking) {
+      const createBarAnimation = (anim: Animated.Value, delay: number) => {
+        return Animated.loop(
+          Animated.sequence([
+            Animated.timing(anim, {
+              toValue: 1,
+              duration: 400,
+              useNativeDriver: true,
+            }),
+            Animated.timing(anim, {
+              toValue: 0.5,
+              duration: 400,
+              useNativeDriver: true,
+            }),
+          ]),
+          { iterations: -1 }
+        );
+      };
+
+      const animations = Animated.parallel([
+        createBarAnimation(soundBar1Anim, 0),
+        createBarAnimation(soundBar2Anim, 200),
+        createBarAnimation(soundBar3Anim, 400),
+      ]);
+
+      animations.start();
+
+      return () => {
+        animations.stop();
+        soundBar1Anim.setValue(0.5);
+        soundBar2Anim.setValue(0.5);
+        soundBar3Anim.setValue(0.5);
+      };
+    }
+  }, [isAISpeaking, soundBar1Anim, soundBar2Anim, soundBar3Anim]);
+
+  // Feedback card slide-up animation
+  useEffect(() => {
+    if (Object.keys(validationResults).length > 0) {
+      feedbackSlideAnim.setValue(10);
+      Animated.timing(feedbackSlideAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [validationResults, feedbackSlideAnim]);
+
   // Speak problem introduction when problem changes
   useEffect(() => {
     if (voiceFeedback && currentProblem.introductionText) {
@@ -277,6 +348,7 @@ export default function App() {
 
       // Notify dialogue manager that speech is starting
       dialogueManager.onSpeechStart();
+      setIsAISpeaking(true);
 
       Speech.speak(speakableText, {
         language: 'en-US',
@@ -285,15 +357,18 @@ export default function App() {
         onDone: () => {
           // Notify dialogue manager that speech has ended
           dialogueManager.onSpeechEnd();
+          setIsAISpeaking(false);
         },
         onStopped: () => {
           // Also handle interruptions
           dialogueManager.onSpeechEnd();
+          setIsAISpeaking(false);
         },
       });
     } catch (error) {
       console.error('Speech failed:', error);
       dialogueManager.onSpeechEnd();
+      setIsAISpeaking(false);
     }
   }, [voiceFeedback]);
 
@@ -1049,105 +1124,106 @@ export default function App() {
   };
 
   return (
-    <GestureHandlerRootView style={[styles.container, { backgroundColor: theme.background }]}>
+    <GestureHandlerRootView style={[styles.container, { backgroundColor: theme.bg }]}>
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style={darkMode ? "light" : "dark"} />
 
         {/* Problem Display */}
-        <View style={[styles.problemContainer, { backgroundColor: theme.surface }]}>
+        <View style={[styles.problemContainer, { backgroundColor: theme.cardBg }]}>
           <View style={styles.problemHeader}>
-            <View style={styles.problemHeaderLeft}>
-              <Text style={[styles.problemLabel, { color: theme.textSecondary }]}>
-                Solve for {currentProblem.goalState.variable}:
-              </Text>
-              <View style={[styles.difficultyBadge, {
-                backgroundColor: currentProblem.difficulty === 'easy' ? '#4CAF50' :
-                  currentProblem.difficulty === 'medium' ? '#FFC107' : '#F44336'
-              }]}>
-                <Text style={styles.difficultyText}>{currentProblem.difficulty}</Text>
+            <Text style={[styles.problemLabel, { color: theme.textSecondary }]}>
+              SOLVE FOR {currentProblem.goalState.variable?.toUpperCase()}
+            </Text>
+
+            {/* Step Indicators */}
+            <View style={styles.stepIndicators}>
+              {completedSteps.map((step) => (
+                <View key={`step-${step}`} style={[styles.stepCircle, { backgroundColor: theme.success }]}>
+                  <Text style={styles.stepCheckmark}>✓</Text>
+                </View>
+              ))}
+              <View style={[styles.stepCircle, { backgroundColor: theme.primary }]}>
+                <Text style={styles.stepNumber}>{currentStep}</Text>
               </View>
-            </View>
-            <TouchableOpacity style={styles.changeProblemButton} onPress={() => setShowProblemSelector(true)}>
-              <Text style={styles.changeProblemButtonText}>📝</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={[styles.problemText, { color: theme.text }]}>{currentProblem.content}</Text>
-
-          {/* Progress Bar - Shows total from problem or dynamically adjusts */}
-          <StepProgressIndicator
-            currentStep={currentStep}
-            totalSteps={totalStepsEstimate || currentStep} // Show current if unknown
-            completedSteps={completedSteps}
-          />
-        </View>
-
-        {/* Toolbar */}
-        <View style={[styles.toolbar, { backgroundColor: theme.surface }]}>
-          <View style={styles.colorPicker}>
-            <Text style={[styles.colorLabel, { color: theme.textSecondary }]}>Ink:</Text>
-            <View style={styles.colorButtons}>
-              {Object.entries(COLORS).map(([name, color]) => (
-                <TouchableOpacity
-                  key={name}
-                  style={[
-                    styles.colorButton,
-                    { backgroundColor: color },
-                    currentColor === color && !isErasing && styles.colorButtonSelected,
-                  ]}
-                  onPress={() => {
-                    setCurrentColor(color);
-                    colorRef.current = color;
-                    // Deactivate eraser when selecting a color
-                    if (isErasing) {
-                      setIsErasing(false);
-                      isErasingRef.current = false;
-                    }
-                  }}
-                >
-                  {currentColor === color && !isErasing && <View style={styles.checkmark} />}
-                </TouchableOpacity>
+              {totalStepsEstimate && Array.from({ length: Math.max(0, totalStepsEstimate - currentStep) }, (_, i) => (
+                <View key={`upcoming-${currentStep + i + 1}`} style={[styles.stepCircle, { backgroundColor: theme.border }]}>
+                  <Text style={[styles.stepNumber, { color: theme.textSecondary }]}>{currentStep + i + 1}</Text>
+                </View>
               ))}
             </View>
           </View>
 
-          <TouchableOpacity
-            style={[
-              styles.toggleButton,
-              isErasing && styles.colorButtonSelected
-            ]}
-            onPress={toggleEraser}
-          >
-            <Text style={styles.toggleButtonText}>🧹</Text>
-          </TouchableOpacity>
+          <Text style={[styles.problemText, { color: theme.text }]}>{currentProblem.content}</Text>
 
-          <TouchableOpacity style={styles.clearButton} onPress={clearCanvas}>
-            <Text style={styles.clearButtonText}>🗑️</Text>
-          </TouchableOpacity>
+          {/* AI Speaking Indicator */}
+          {isAISpeaking && (
+            <View style={[styles.aiSpeakingBanner, {
+              backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.08)',
+              borderColor: darkMode ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.2)',
+            }]}>
+              <View style={styles.soundBars}>
+                <Animated.View style={[styles.soundBar, { transform: [{ scaleY: soundBar1Anim }] }]} />
+                <Animated.View style={[styles.soundBar, { transform: [{ scaleY: soundBar2Anim }] }]} />
+                <Animated.View style={[styles.soundBar, { transform: [{ scaleY: soundBar3Anim }] }]} />
+              </View>
+              <Text style={styles.aiSpeakingText}>AI is speaking...</Text>
+            </View>
+          )}
+        </View>
 
-          <TouchableOpacity
-            style={[styles.toggleButton, !showGuideLines && styles.toggleButtonOff]}
-            onPress={() => setShowGuideLines(!showGuideLines)}
-          >
-            <Text style={styles.toggleButtonText}>📏</Text>
-          </TouchableOpacity>
+        {/* Toolbar */}
+        <View style={[styles.toolbar, { backgroundColor: theme.cardBg }]}>
+          <View style={styles.toolsLeft}>
+            {/* Pen Tool - Always active */}
+            <TouchableOpacity
+              style={[styles.toolButton, styles.penButton]}
+              onPress={() => {
+                if (isErasing) {
+                  setIsErasing(false);
+                  isErasingRef.current = false;
+                }
+              }}
+            >
+              <Text style={styles.toolButtonText}>✏️</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.toggleButton, !autoValidate && styles.toggleButtonOff]}
-            onPress={() => setAutoValidate(!autoValidate)}
-          >
-            <Text style={styles.toggleButtonText}>⚡</Text>
-          </TouchableOpacity>
+            {/* Eraser */}
+            <TouchableOpacity
+              style={[
+                styles.toolButton,
+                isErasing && styles.toolButtonActive,
+                { borderColor: theme.border }
+              ]}
+              onPress={toggleEraser}
+            >
+              <Text style={styles.toolButtonText}>🧹</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.toggleButton, !voiceFeedback && styles.toggleButtonOff]}
-            onPress={() => {
-              setVoiceFeedback(!voiceFeedback);
-              if (voiceFeedback) Speech.stop();
-            }}
-          >
-            <Text style={styles.toggleButtonText}>{voiceFeedback ? '🔊' : '🔇'}</Text>
-          </TouchableOpacity>
+            {/* Clear All */}
+            <TouchableOpacity
+              style={[styles.toolButton, { borderColor: theme.border }]}
+              onPress={clearCanvas}
+            >
+              <Text style={styles.toolButtonText}>🗑️</Text>
+            </TouchableOpacity>
 
+            {/* Voice Feedback Toggle */}
+            <TouchableOpacity
+              style={[
+                styles.toolButton,
+                { borderColor: theme.border },
+                !voiceFeedback && styles.toolButtonInactive
+              ]}
+              onPress={() => {
+                setVoiceFeedback(!voiceFeedback);
+                if (voiceFeedback) Speech.stop();
+              }}
+            >
+              <Text style={styles.toolButtonText}>{voiceFeedback ? '🔊' : '🔇'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Voice Button */}
           <Animated.View
             style={{
               transform: [{ scale: waitingForAnswer ? answerModePulseAnim : 1 }],
@@ -1155,9 +1231,9 @@ export default function App() {
           >
             <TouchableOpacity
               style={[
-                styles.toggleButton,
-                isListening && styles.microphoneListening,
-                waitingForAnswer && styles.microphoneWaiting
+                styles.micButton,
+                isListening && styles.micButtonListening,
+                waitingForAnswer && styles.micButtonWaiting
               ]}
               onPress={() => {
                 if (isListening) {
@@ -1167,25 +1243,19 @@ export default function App() {
                 }
               }}
             >
-              <Text style={styles.toggleButtonText}>🎤</Text>
+              <Text style={styles.micButtonIcon}>🎤</Text>
+              <Text style={styles.micButtonText}>Tap to respond</Text>
             </TouchableOpacity>
           </Animated.View>
-
-          <TouchableOpacity
-            style={[styles.toggleButton, !darkMode && styles.toggleButtonOff]}
-            onPress={toggleDarkMode}
-          >
-            <Text style={styles.toggleButtonText}>{darkMode ? '🌙' : '☀️'}</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Canvas */}
         <GestureDetector gesture={drawGesture}>
-          <View style={[styles.canvasContainer, { backgroundColor: theme.surface }]}>
+          <View style={[styles.canvasContainer, { backgroundColor: theme.canvasBg }]}>
             {pathStrings.length === 0 && (
               <View style={styles.emptyState}>
                 <Text style={[styles.emptyStateText, { color: theme.textSecondary }]}>
-                  ✏️ Write your first step here!
+                  ✍️ Write your answer here
                 </Text>
               </View>
             )}
@@ -1214,7 +1284,7 @@ export default function App() {
                   key={line.key}
                   p1={{ x: 0, y: line.y }}
                   p2={{ x: CANVAS_WIDTH, y: line.y }}
-                  color={GUIDE_LINE_COLOR}
+                  color={theme.canvasLine}
                   strokeWidth={GUIDE_LINE_WIDTH}
                 />
               ))}
@@ -1288,32 +1358,74 @@ export default function App() {
           </View>
         )}
 
-        {/* Validation Button */}
-        {hasUnvalidatedStrokes && !autoValidate && (
+        {/* Feedback Card - appears above buttons */}
+        {Object.keys(validationResults).length > 0 && (() => {
+          const latestLineNum = Math.max(...Object.keys(validationResults).map(Number));
+          const result = validationResults[latestLineNum];
+          const isCorrect = result.mathematicallyCorrect;
+
+          return (
+            <Animated.View style={[styles.feedbackCardContainer, { transform: [{ translateY: feedbackSlideAnim }] }]}>
+              <View style={[
+                styles.feedbackCard,
+                {
+                  backgroundColor: isCorrect ? theme.successBg : theme.warningBg,
+                  borderColor: isCorrect ? theme.success : theme.warning,
+                }
+              ]}>
+                <View style={[styles.feedbackIconCircle, { backgroundColor: isCorrect ? theme.success : theme.warning }]}>
+                  <Text style={styles.feedbackIconText}>{isCorrect ? '✓' : '?'}</Text>
+                </View>
+                <View style={styles.feedbackContent}>
+                  <Text style={[styles.feedbackTitle, { color: isCorrect ? theme.successText : theme.warningText }]}>
+                    {isCorrect ? 'Excellent work!' : 'Let\'s think about this...'}
+                  </Text>
+                  <Text style={[styles.feedbackMessage, { color: isCorrect ? '#047857' : '#92400E' }]}>
+                    {result.feedbackMessage}
+                  </Text>
+                </View>
+              </View>
+            </Animated.View>
+          );
+        })()}
+
+        {/* Action Buttons */}
+        {Object.keys(validationResults).length > 0 ? (
+          // Continue Button - after validation
+          <TouchableOpacity
+            style={[styles.continueButton]}
+            onPress={() => {
+              // Clear canvas for next step
+              clearCanvas();
+              // Reset feedback
+              setValidationResults({});
+            }}
+          >
+            <Text style={styles.continueButtonText}>Continue to Next Step →</Text>
+          </TouchableOpacity>
+        ) : hasUnvalidatedStrokes && !autoValidate ? (
+          // Check My Work Button
           <Animated.View style={{ transform: [{ scale: validating ? 1 : pulseAnim }] }}>
             <TouchableOpacity
-              style={[styles.validateButton, validating && styles.validateButtonDisabled]}
+              style={[styles.submitButton, validating && styles.submitButtonDisabled]}
               onPress={() => validateCurrentLine(true)}
               disabled={validating}
             >
               {validating ? (
                 <View style={styles.validatingContent}>
                   <ActivityIndicator color="#fff" size="small" />
-                  <Text style={styles.validateButtonText}>{validationProgress}</Text>
+                  <Text style={styles.submitButtonText}>{validationProgress}</Text>
                 </View>
               ) : (
-                <>
-                  <Text style={styles.validateButtonIcon}>✓</Text>
-                  <Text style={styles.validateButtonText}>Check My Work</Text>
-                </>
+                <Text style={styles.submitButtonText}>✓ Check My Work</Text>
               )}
             </TouchableOpacity>
           </Animated.View>
-        )}
+        ) : null}
 
-        {/* Feedback Section */}
-        {Object.keys(validationResults).length > 0 && (
-          <View style={[styles.feedbackSection, { backgroundColor: theme.surface }]}>
+        {/* Old Feedback Section - REMOVE THIS */}
+        {false && Object.keys(validationResults).length > 0 && (
+          <View style={[styles.feedbackSection, { backgroundColor: theme.cardBg }]}>
             <View style={[styles.feedbackHeader, { borderBottomColor: theme.border }]}>
               <Text style={[styles.feedbackHeaderText, { color: theme.text }]}>
                 Feedback ({Object.keys(validationResults).length})
@@ -1327,7 +1439,7 @@ export default function App() {
                   <View
                     key={`feedback-${lineNum}`}
                     style={[
-                      styles.feedbackCard,
+                      styles.oldFeedbackCard,
                       result.mathematicallyCorrect && result.useful
                         ? styles.feedbackCorrect
                         : result.mathematicallyCorrect
@@ -1338,7 +1450,7 @@ export default function App() {
                     <View style={styles.feedbackCardHeader}>
                       <Text style={styles.feedbackIcon}>{getValidationIcon(result)}</Text>
                       <View style={styles.feedbackTitleContainer}>
-                        <Text style={[styles.feedbackTitle, { color: theme.text }]}>
+                        <Text style={[styles.oldFeedbackTitle, { color: theme.text }]}>
                           {result.mathematicallyCorrect && result.useful
                             ? 'Correct & Useful!'
                             : result.mathematicallyCorrect
@@ -1525,100 +1637,154 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1 },
   problemContainer: {
-    padding: 20,
+    padding: 28,
     marginHorizontal: 20,
     marginTop: 10,
-    borderRadius: 16,
+    borderRadius: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
+    shadowOpacity: 0.08,
+    shadowRadius: 20,
     elevation: 5,
   },
   problemHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
-  },
-  problemHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    marginBottom: 20,
   },
   problemLabel: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
+    letterSpacing: 0.5,
   },
-  difficultyBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
+  stepIndicators: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
   },
-  difficultyText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'capitalize',
-  },
-  changeProblemButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#2196F3',
+  stepCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  changeProblemButtonText: {
-    fontSize: 20,
+  stepCheckmark: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  stepNumber: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
   problemText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 16,
+    fontSize: 36,
+    fontWeight: '700',
+    marginBottom: 8,
+    fontFamily: 'Georgia',
+  },
+  aiSpeakingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 16,
+    padding: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 2,
+  },
+  soundBars: {
+    flexDirection: 'row',
+    gap: 4,
+    alignItems: 'center',
+  },
+  soundBar: {
+    width: 4,
+    height: 16,
+    backgroundColor: '#3B82F6',
+    borderRadius: 2,
+  },
+  aiSpeakingText: {
+    color: '#3B82F6',
+    fontSize: 14,
+    fontWeight: '600',
   },
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    justifyContent: 'space-between',
+    padding: 12,
     paddingHorizontal: 20,
     marginHorizontal: 20,
-    marginTop: 12,
-    borderRadius: 12,
-    gap: 12,
+    marginTop: 16,
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 3,
   },
-  colorPicker: {
+  toolsLeft: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+  },
+  toolButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+  },
+  toolButtonText: {
+    fontSize: 20,
+  },
+  penButton: {
+    backgroundColor: '#3B82F6',
+    borderWidth: 0,
+    shadowColor: '#3B82F6',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  toolButtonActive: {
+    backgroundColor: '#3B82F6',
+    borderWidth: 0,
+  },
+  toolButtonInactive: {
+    opacity: 0.5,
+  },
+  micButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
     gap: 8,
+    padding: 10,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    backgroundColor: '#3B82F6',
+    shadowColor: '#3B82F6',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
-  colorLabel: {
+  micButtonIcon: {
+    fontSize: 18,
+  },
+  micButtonText: {
+    color: '#fff',
     fontSize: 14,
     fontWeight: '600',
   },
-  colorButtons: {
-    flexDirection: 'row',
-    gap: 8,
+  micButtonListening: {
+    backgroundColor: '#10B981',
   },
-  colorButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#ddd',
-  },
-  colorButtonSelected: {
-    borderColor: '#0066CC',
-    borderWidth: 3,
-  },
-  checkmark: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#fff',
+  micButtonWaiting: {
+    backgroundColor: '#F59E0B',
   },
   clearButton: {
     backgroundColor: '#f44336',
@@ -1663,13 +1829,15 @@ const styles = StyleSheet.create({
   },
   canvasContainer: {
     marginHorizontal: 20,
-    marginTop: 12,
-    borderRadius: 16,
+    marginTop: 16,
+    borderRadius: 20,
+    padding: 32,
+    minHeight: 400,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
+    shadowOpacity: 0.08,
+    shadowRadius: 20,
     elevation: 5,
     position: 'relative',
   },
@@ -1685,7 +1853,7 @@ const styles = StyleSheet.create({
     pointerEvents: 'none',
   },
   emptyStateText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
   },
   listeningIndicator: {
@@ -1776,6 +1944,96 @@ const styles = StyleSheet.create({
     color: '#333',
     lineHeight: 18,
   },
+  // New feedback card styles
+  feedbackCardContainer: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    marginBottom: 16,
+  },
+  feedbackCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 20,
+    paddingHorizontal: 24,
+    borderRadius: 16,
+    borderWidth: 2,
+  },
+  feedbackIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  feedbackIconText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  feedbackContent: {
+    flex: 1,
+  },
+  feedbackTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  feedbackMessage: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  // New action button styles
+  submitButton: {
+    backgroundColor: '#10B981',
+    marginHorizontal: 20,
+    marginTop: 12,
+    paddingVertical: 18,
+    borderRadius: 16,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  submitButtonDisabled: {
+    backgroundColor: '#9E9E9E',
+    shadowColor: '#000',
+  },
+  submitButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  continueButton: {
+    backgroundColor: '#3B82F6',
+    marginHorizontal: 20,
+    marginTop: 12,
+    paddingVertical: 18,
+    borderRadius: 16,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#3B82F6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  continueButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  validatingContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  // Old styles - keep for backward compatibility
   validateButton: {
     backgroundColor: '#4CAF50',
     marginHorizontal: 20,
@@ -1804,11 +2062,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
-  },
-  validatingContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
   },
   feedbackSection: {
     marginHorizontal: 20,
