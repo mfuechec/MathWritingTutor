@@ -50,9 +50,10 @@ const COLOR_NAMES = {
 };
 
 // FeedbackCard Component - Extracted for proper re-rendering
-const FeedbackCard = ({ message, isCorrect, theme, slideAnim }: {
+const FeedbackCard = ({ message, isCorrect, recognizedExpression, theme, slideAnim }: {
   message: string;
   isCorrect: boolean;
+  recognizedExpression?: string;
   theme: any;
   slideAnim: Animated.Value;
 }) => {
@@ -93,6 +94,21 @@ const FeedbackCard = ({ message, isCorrect, theme, slideAnim }: {
           </Text>
         </View>
         <View style={{ flex: 1 }}>
+          {recognizedExpression && (
+            <View style={{
+              backgroundColor: 'rgba(0, 0, 0, 0.05)',
+              padding: 8,
+              borderRadius: 8,
+              marginBottom: 12,
+            }}>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: '#6B7280', marginBottom: 4 }}>
+                I read:
+              </Text>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#1F2937', fontFamily: 'Courier' }}>
+                {recognizedExpression}
+              </Text>
+            </View>
+          )}
           <Text style={{ fontSize: 16, fontWeight: '700', marginBottom: 8, color: isCorrect ? '#065F46' : '#92400E' }}>
             {isCorrect ? 'Excellent work!' : 'Let\'s think about this...'}
           </Text>
@@ -2012,6 +2028,7 @@ export default function App() {
               key={`feedback-${latestLineNum}`}
               message={feedbackText}
               isCorrect={isCorrect}
+              recognizedExpression={result.recognizedExpression}
               theme={theme}
               slideAnim={feedbackSlideAnim}
             />

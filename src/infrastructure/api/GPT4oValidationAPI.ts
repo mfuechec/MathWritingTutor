@@ -242,7 +242,7 @@ Respond with ONLY the explanation text (no JSON, no preamble).`,
               type: 'image_url',
               image_url: {
                 url: `data:image/png;base64,${request.canvasImageBase64}`,
-                detail: 'auto', // Balanced detail for speed vs accuracy (was 'high')
+                detail: 'high', // High detail for better OCR accuracy
               },
             },
           ],
@@ -265,6 +265,9 @@ Respond with ONLY the explanation text (no JSON, no preamble).`,
     const parsed = JSON.parse(content);
     const parseTime = Date.now() - parseStartTime;
     console.log(`⏱️ │  ├─ Response Parsing: ${parseTime}ms`);
+
+    // DEBUG: Log full GPT-4o response
+    console.log('🔍 RAW GPT-4o RESPONSE:', JSON.stringify(parsed, null, 2));
 
     // CACHE PERFORMANCE MONITORING
     const promptTokens = response.usage?.prompt_tokens || 0;
@@ -454,7 +457,8 @@ VALIDATION PRINCIPLES:
 - Allow shortcuts if mathematically sound (e.g., combining multiple steps mentally)
 - Judge by algebraic correctness, not by the method used
 - If uncertain about handwriting OCR, note the ambiguity in transcription_notes
-- Be accurate: only mark mathematically_correct=true if confident (>=0.75) the math is valid`;
+- Be strict and accurate: mark mathematically_correct=true ONLY if the math is algebraically valid
+- Mark mathematically_correct=false if the math is wrong, even if you're uncertain`;
 
     const personaGuidelines = this.getPersonaGuidelines(personaType);
 
@@ -618,6 +622,12 @@ If student writes the final answer (e.g., "x = 4" for problem goal), mark:
 Goal: ${this.describeGoal(problem)}
 
 Previous: ${previousSteps.length > 0 ? previousSteps.map((step, i) => `${i + 1}. ${step}`).join('\n') : 'None'}
+
+⚠️ CRITICAL: Read EXACTLY what the student wrote in the image - DO NOT infer what they should have written!
+⚠️ If the image shows "2x = 10", transcribe "2x = 10" (even if mathematically incorrect)
+⚠️ If the image shows scribbles/nonsense, transcribe what you see (e.g., "unreadable marks")
+⚠️ DO NOT fill in the "correct" answer based on the problem context
+
 Student wrote (from image): "${recognizedExpression}"
 
 VALIDATE:
