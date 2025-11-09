@@ -2217,7 +2217,11 @@ export default function App() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.completionButton, { backgroundColor: '#2196F3' }]}
-                  onPress={() => setShowCompletionModal(false)}
+                  onPress={() => {
+                    setValidationResults({});
+                    setPreviousSteps([]);
+                    setShowCompletionModal(false);
+                  }}
                 >
                   <Text style={styles.completionButtonText}>Choose Problem</Text>
                 </TouchableOpacity>
