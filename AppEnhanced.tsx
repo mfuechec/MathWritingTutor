@@ -1181,11 +1181,11 @@ export default function App() {
       return;
     }
 
-    // Schedule background validation after 2.5 seconds of no canvas changes
+    // Schedule background validation after 1.5 seconds of no canvas changes
     backgroundValidationTimer.current = setTimeout(() => {
-      console.log('🕐 User paused for 2.5s - triggering background validation...');
+      console.log('🕐 User paused for 1.5s - triggering background validation...');
       validateInBackground();
-    }, 2500); // 2.5 second debounce
+    }, 1500); // 1.5 second debounce
 
     // Cleanup on unmount or when dependencies change
     return () => {
