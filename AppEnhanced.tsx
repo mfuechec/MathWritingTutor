@@ -2221,6 +2221,7 @@ export default function App() {
                     setValidationResults({});
                     setPreviousSteps([]);
                     setShowCompletionModal(false);
+                    setShowProblemSelector(true);
                   }}
                 >
                   <Text style={styles.completionButtonText}>Choose Problem</Text>
