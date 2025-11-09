@@ -445,15 +445,16 @@ A step is CORRECT if it is algebraically equivalent to the previous step or orig
 VALIDATION PROCESS:
 1. Read what the student wrote (GPT-4o Vision handles OCR)
 2. Identify what mathematical operation they performed
-3. Verify it's algebraically valid
+3. Verify it's algebraically valid by checking equivalence
 4. Accept ALL mathematically valid approaches
-5. Only mark incorrect if you're CERTAIN there's a mathematical error
+5. Mark as correct only if algebraically equivalent to previous step
 
-BENEFIT OF DOUBT PRINCIPLE:
-- If you're uncertain (validation_confidence < 0.85), mark as CORRECT and note the ambiguity
+VALIDATION PRINCIPLES:
 - Accept valid alternative solution strategies (students don't have to follow one specific path)
 - Allow shortcuts if mathematically sound (e.g., combining multiple steps mentally)
-- When in doubt, favor the student`;
+- Judge by algebraic correctness, not by the method used
+- If uncertain about handwriting OCR, note the ambiguity in transcription_notes
+- Be accurate: only mark mathematically_correct=true if confident (>=0.75) the math is valid`;
 
     const personaGuidelines = this.getPersonaGuidelines(personaType);
 
@@ -571,7 +572,11 @@ VALIDATION CONFIDENCE GUIDE:
 0.8 = Confident, but slight ambiguity (handwriting or unconventional notation)
 0.7 = Unsure, unusual approach or unclear handwriting
 <0.7 = Cannot reliably validate
-⚠️ If confidence < 0.85 AND you marked incorrect → override to CORRECT (benefit of doubt)
+
+⚠️ IMPORTANT: validation_confidence reflects YOUR confidence in the judgment, NOT a reason to accept wrong answers
+⚠️ If you're uncertain about handwriting OCR → lower ocr_confidence and note in transcription_notes
+⚠️ If you're uncertain about mathematical correctness → be honest in validation_confidence, but DON'T change your judgment
+⚠️ Mark mathematically_correct=false if the math is wrong, regardless of confidence level
 
 PROGRESS SCORE EXAMPLES:
 Problem: 2(x + 3) = 14
@@ -649,9 +654,9 @@ Return JSON.`;
    * Note: recognizedExpression and recognitionConfidence will be filled by the caller
    * (either from GPT-4o Vision directly, or from Mathpix OCR if using legacy method)
    *
-   * BENEFIT OF DOUBT SAFETY NET:
-   * If AI reports low validation_confidence (<0.85) on an incorrect judgment,
-   * we override to mark as correct to avoid false negatives.
+   * VALIDATION APPROACH:
+   * Trusts the AI's mathematical judgment without overrides.
+   * Logs low confidence cases for monitoring and debugging.
    */
   private parseValidationResponse(
     parsed: any,
