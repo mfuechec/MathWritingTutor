@@ -1059,12 +1059,13 @@ export default function App() {
     );
 
     // Call OpenAI validation API
+    // NOTE: Not passing expectedSolutionSteps to avoid anchoring bias
     const response = await gpt4oValidationAPI.validateStep({
       canvasImageBase64: imageBase64,
       problem: capturedProblem,
       previousSteps: capturedPreviousSteps,
       currentStepNumber: capturedPreviousSteps.length + 1,
-      expectedSolutionSteps: capturedProblem.expectedSolutionSteps,
+      // expectedSolutionSteps: Intentionally omitted - prevents anchoring bias
     });
 
     console.log(`✅ [${isBackground ? 'BACKGROUND' : 'MANUAL'}] Validation result:`);

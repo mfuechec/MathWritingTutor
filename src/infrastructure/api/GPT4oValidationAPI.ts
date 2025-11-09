@@ -293,7 +293,7 @@ Respond with ONLY the explanation text (no JSON, no preamble).`,
 
     // GPT-4o Vision returns the transcribed text in the response
     const recognizedExpression = parsed.transcribed_expression || parsed.recognized_text || '';
-    const recognitionConfidence = parsed.ocr_confidence || 0.95; // Default high confidence for GPT-4o
+    const recognitionConfidence = parsed.ocr_confidence || 0.5; // Conservative default (was 0.95)
     const transcriptionNotes = parsed.transcription_notes || '';
 
     console.log('=== GPT-4o VISION OCR ===');
@@ -604,47 +604,22 @@ If student writes the final answer (e.g., "x = 4" for problem goal), mark:
    * Build the validation prompt with problem context
    */
   private buildValidationPrompt(request: StepValidationRequest, recognizedExpression: string): string {
-    const { problem, previousSteps, expectedSolutionSteps } = request;
+    const { problem, previousSteps } = request;
 
-    // Build expected steps context if available - WITH STRONG ANTI-ANCHORING WARNING
-    let expectedStepsContext = '';
-    if (expectedSolutionSteps && expectedSolutionSteps.length > 0) {
-      expectedStepsContext = `
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ HINT GENERATION ONLY (DO NOT USE FOR VALIDATION) ⚠️
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Model Solution Path (FOR HINTS ONLY):
-${expectedSolutionSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
-
-⚠️ CRITICAL: DO NOT USE THIS TO VALIDATE THE STUDENT'S WORK ⚠️
-
-The student may use a DIFFERENT but EQUALLY VALID approach.
-Examples:
-- They might divide both sides first instead of distributing
-- They might combine steps you show separately
-- They might use a creative shortcut
-
-Validate based on ALGEBRAIC EQUIVALENCE, NOT adherence to this path.
-Only reference this model solution when generating hints if the student needs help.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
-    }
+    // NOTE: expectedSolutionSteps intentionally NOT included to prevent anchoring bias
+    // Will only be used for hint generation in future separate API calls
 
     return `Problem: ${problem.content}
 Goal: ${this.describeGoal(problem)}
 
 Previous: ${previousSteps.length > 0 ? previousSteps.map((step, i) => `${i + 1}. ${step}`).join('\n') : 'None'}
 Student wrote (from image): "${recognizedExpression}"
-${expectedStepsContext}
 
 VALIDATE:
 1. Starting equation: ${previousSteps.length > 0 ? previousSteps[previousSteps.length - 1] : problem.content}
 2. What operation did student perform?
 3. Is result algebraically equivalent? → mathematically_correct: true/false
 4. validation_confidence: 1.0 (certain), 0.9 (confident), 0.7 (unsure), <0.7 (can't validate)
-   ⚠️ If unsure (<0.85), mark correct to avoid false negatives
 5. useful: Does it progress toward solution?
 6. Generate feedback (specific, encouraging for correct; gentle guidance for incorrect)
 
@@ -683,22 +658,20 @@ Return JSON.`;
     rawResponse: string,
     metadata?: any
   ): StepValidationResponse {
-    const validationConfidence = parsed.validation_confidence || 1.0;
+    const validationConfidence = parsed.validation_confidence || 0.5;
     const reportedCorrect = parsed.mathematically_correct || false;
 
-    // BENEFIT OF DOUBT: If AI is uncertain, assume correct to avoid false negatives
-    const mathematicallyCorrect = validationConfidence < 0.85 && !reportedCorrect
-      ? true
-      : reportedCorrect;
+    // Trust the AI's judgment - no benefit of doubt override
+    // Previous logic was backwards: uncertain + incorrect = mark correct (caused false positives)
+    const mathematicallyCorrect = reportedCorrect;
 
-    // Log when we override to give benefit of doubt
-    if (validationConfidence < 0.85 && !reportedCorrect) {
-      console.warn('⚠️ BENEFIT OF DOUBT - Low confidence, marking as CORRECT:', {
+    // Log low confidence scenarios for monitoring
+    if (validationConfidence < 0.85) {
+      console.warn('⚠️ LOW VALIDATION CONFIDENCE:', {
         expression: parsed.transcribed_expression,
         validationConfidence,
-        originalJudgment: reportedCorrect,
-        overriddenTo: true,
-        reason: 'validation_confidence < 0.85 triggers automatic benefit of doubt'
+        mathematicallyCorrect: reportedCorrect,
+        note: 'Trusting AI judgment despite uncertainty'
       });
     }
 
