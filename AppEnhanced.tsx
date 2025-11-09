@@ -184,6 +184,14 @@ export default function App() {
   const startYRef = useRef<number>(0);
   const isErasingRef = useRef<boolean>(false);
 
+  // BACKGROUND VALIDATION: Validate proactively while user pauses
+  const [pendingValidation, setPendingValidation] = useState<StepValidationResponse | null>(null);
+  const [pendingValidationLine, setPendingValidationLine] = useState<number | null>(null);
+  const backgroundValidationTimer = useRef<NodeJS.Timeout | null>(null);
+  const [isBackgroundValidating, setIsBackgroundValidating] = useState<boolean>(false);
+  const lastCanvasState = useRef<string>(''); // Hash of canvas to detect changes
+  const backgroundValidationPromise = useRef<Promise<StepValidationResponse> | null>(null); // Track in-progress validation
+
   // Theme colors - New design tokens
   const theme = darkMode ? {
     bg: '#0F1419',
@@ -990,6 +998,192 @@ export default function App() {
     setShowCompletionModal(false);
   }, [currentProblem.id, clearCanvas]);
 
+  /**
+   * SHARED VALIDATION CORE
+   * Single source of truth for validation logic - NO state closure
+   * Both background and manual validation call this function
+   */
+  const performValidationCore = async (params: {
+    pathStrings: string[];
+    pathColors: string[];
+    pathObjectsCache: React.MutableRefObject<Map<number, SkPath>>;
+    currentProblem: Problem;
+    previousSteps: string[];
+    currentLineNumber: number;
+    isBackground: boolean;
+  }): Promise<StepValidationResponse> => {
+    const {
+      pathStrings: capturedPathStrings,
+      pathColors: capturedPathColors,
+      pathObjectsCache: capturedCache,
+      currentProblem: capturedProblem,
+      previousSteps: capturedPreviousSteps,
+      currentLineNumber: capturedLineNumber,
+      isBackground,
+    } = params;
+
+    console.log(`🔍 [${isBackground ? 'BACKGROUND' : 'MANUAL'}] Validation state captured:`);
+    console.log(`   Line: ${capturedLineNumber}`);
+    console.log(`   Previous steps: ${capturedPreviousSteps.length}`);
+    console.log(`   Canvas strokes: ${capturedPathStrings.length}`);
+    console.log(`   Problem: ${capturedProblem.content}`);
+
+    // Prepare strokes from path strings
+    const allStrokes = capturedPathStrings.map((pathString, idx) => {
+      let path = capturedCache.current.get(idx);
+      if (!path) {
+        path = Skia.Path.MakeFromSVGString(pathString);
+        if (path) capturedCache.current.set(idx, path);
+      }
+      return { path: path!, color: capturedPathColors[idx] };
+    });
+
+    // Capture canvas image
+    const imageBase64 = await CanvasImageCapture.captureStrokesAsBase64(
+      allStrokes,
+      { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }
+    );
+
+    // Call OpenAI validation API
+    const response = await gpt4oValidationAPI.validateStep({
+      canvasImageBase64: imageBase64,
+      problem: capturedProblem,
+      previousSteps: capturedPreviousSteps,
+      currentStepNumber: capturedPreviousSteps.length + 1,
+      expectedSolutionSteps: capturedProblem.expectedSolutionSteps,
+    });
+
+    console.log(`✅ [${isBackground ? 'BACKGROUND' : 'MANUAL'}] Validation result:`);
+    console.log(`   Recognized: "${response.recognizedExpression}"`);
+    console.log(`   Correct: ${response.mathematicallyCorrect}`);
+    console.log(`   Progress: ${response.progressScore}`);
+
+    return response;
+  };
+
+  /**
+   * BACKGROUND VALIDATION: Silently validate in the background while user pauses
+   * This makes feedback feel instant when they press the check button
+   */
+  const validateInBackground = useCallback(async () => {
+    // Don't validate if already validating or if this line is already validated
+    if (isValidatingRef.current || isBackgroundValidating) {
+      console.log('🔄 Background validation skipped (validation already in progress)');
+      return;
+    }
+
+    if (!currentLineNumber || validationResults[currentLineNumber]) {
+      console.log('🔄 Background validation skipped (no line or already validated)');
+      return;
+    }
+
+    // Check if there are strokes to validate
+    if (pathStrings.length === 0) {
+      console.log('🔄 Background validation skipped (no strokes)');
+      return;
+    }
+
+    try {
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🔄 BACKGROUND VALIDATION STARTED');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+      setIsBackgroundValidating(true);
+
+      // Capture canvas state hash to detect changes
+      const canvasHash = pathStrings.join('|');
+      lastCanvasState.current = canvasHash;
+
+      // ✨ CREATE PROMISE AND STORE IT - allows manual validation to wait for this
+      const validationPromise = performValidationCore({
+        pathStrings,
+        pathColors,
+        pathObjectsCache,
+        currentProblem,
+        previousSteps,
+        currentLineNumber,
+        isBackground: true,
+      });
+
+      backgroundValidationPromise.current = validationPromise;
+
+      const response = await validationPromise;
+
+      // Check if canvas changed while we were validating
+      const currentCanvasHash = pathStrings.join('|');
+      if (currentCanvasHash !== canvasHash) {
+        console.log('⚠️ Background validation discarded (canvas changed during validation)');
+        return;
+      }
+
+      // Cache the result for instant use when user presses check button
+      setPendingValidation(response);
+      setPendingValidationLine(currentLineNumber);
+
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('✅ BACKGROUND VALIDATION COMPLETE - Result cached');
+      console.log('💡 User will get INSTANT feedback on submit!');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    } catch (error) {
+      console.error('Background validation error:', error);
+      // Fail silently - user can still validate normally
+    } finally {
+      setIsBackgroundValidating(false);
+      backgroundValidationPromise.current = null; // Clear promise when done
+    }
+  }, [
+    currentLineNumber,
+    validationResults,
+    pathStrings,
+    pathColors,
+    currentProblem,
+    previousSteps,
+    pathObjectsCache,
+    isBackgroundValidating,
+  ]);
+
+  // BACKGROUND VALIDATION TRIGGER: Start validation after 2.5s of inactivity
+  useEffect(() => {
+    // Clear any existing timer
+    if (backgroundValidationTimer.current) {
+      clearTimeout(backgroundValidationTimer.current);
+      backgroundValidationTimer.current = null;
+    }
+
+    // Don't trigger if no strokes or already validated
+    if (pathStrings.length === 0 || !currentLineNumber || validationResults[currentLineNumber]) {
+      return;
+    }
+
+    // Schedule background validation after 2.5 seconds of no canvas changes
+    backgroundValidationTimer.current = setTimeout(() => {
+      console.log('🕐 User paused for 2.5s - triggering background validation...');
+      validateInBackground();
+    }, 2500); // 2.5 second debounce
+
+    // Cleanup on unmount or when dependencies change
+    return () => {
+      if (backgroundValidationTimer.current) {
+        clearTimeout(backgroundValidationTimer.current);
+        backgroundValidationTimer.current = null;
+      }
+    };
+  }, [pathStrings, currentLineNumber, validationResults, validateInBackground]);
+
+  // CANVAS CHANGE DETECTION: Clear pending validation when user modifies canvas
+  useEffect(() => {
+    const currentCanvasHash = pathStrings.join('|');
+
+    // If canvas changed and we have a pending validation, invalidate it
+    if (pendingValidation && lastCanvasState.current !== currentCanvasHash) {
+      console.log('⚠️ Canvas changed - clearing pending validation');
+      setPendingValidation(null);
+      setPendingValidationLine(null);
+    }
+
+    lastCanvasState.current = currentCanvasHash;
+  }, [pathStrings, pendingValidation]);
+
   const validateCurrentLine = async (manualTrigger = false) => {
     if (isValidatingRef.current) {
       console.log('Validation already in progress, skipping...');
@@ -1004,6 +1198,148 @@ export default function App() {
       return;
     }
 
+    // ✨ INSTANT FEEDBACK: Check if we have a cached validation result from background validation
+    if (pendingValidation && pendingValidationLine === currentLineNumber) {
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('⚡ INSTANT FEEDBACK - Using cached background validation result!');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+      const response = pendingValidation;
+
+      // Clear pending validation
+      setPendingValidation(null);
+      setPendingValidationLine(null);
+
+      // Apply the cached result immediately (no API call needed!)
+      isValidatingRef.current = true;
+      setValidating(true);
+
+      if (!checkmarkAnimations.current[currentLineNumber]) {
+        checkmarkAnimations.current[currentLineNumber] = new Animated.Value(0);
+      }
+      Animated.spring(checkmarkAnimations.current[currentLineNumber], {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 50,
+        friction: 7,
+      }).start();
+
+      setValidationResults(prev => ({ ...prev, [currentLineNumber]: response }));
+
+      if (response.mathematicallyCorrect) {
+        setPreviousSteps(prev => [...prev, response.recognizedExpression]);
+        setStepCorrectness(prev => [...prev, true]);
+        setCompletedSteps(prev => [...prev, currentStep]);
+        setCurrentStep(prev => prev + 1);
+        setConsecutiveIncorrect(0);
+        setShowHintSuggestion(false);
+
+        if (response.estimatedStepsRemaining !== undefined && response.estimatedStepsRemaining >= 0) {
+          const newTotal = currentStep + response.estimatedStepsRemaining;
+          setTotalStepsEstimate(prev => Math.max(prev || 0, newTotal));
+        }
+
+        // ✨ Clear validated strokes from canvas after animation starts
+        setTimeout(() => {
+          clearCanvas();
+        }, 500);
+      } else {
+        setConsecutiveIncorrect(prev => prev + 1);
+        if (consecutiveIncorrect + 1 >= 2) {
+          setShowHintSuggestion(true);
+        }
+      }
+
+      setValidating(false);
+      isValidatingRef.current = false;
+
+      console.log('⚡ Feedback delivered INSTANTLY (0ms wait)!');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      return;
+    }
+
+    // ⏳ WAIT FOR IN-PROGRESS BACKGROUND VALIDATION
+    // If background validation is running, wait for it instead of starting a new one
+    if (backgroundValidationPromise.current && isBackgroundValidating) {
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('⏳ WAITING - Background validation in progress...');
+
+      // Verify canvas hasn't changed since background validation started
+      const bgCanvasHash = lastCanvasState.current;
+      const currentCanvasHash = pathStrings.join('|');
+
+      if (bgCanvasHash === currentCanvasHash) {
+        console.log('✅ Canvas unchanged - safe to wait for background validation');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        try {
+          // Show waiting UI
+          isValidatingRef.current = true;
+          setValidating(true);
+          setValidationProgress('Finishing up...');
+
+          // Wait for background validation to complete
+          const waitStart = Date.now();
+          const response = await backgroundValidationPromise.current;
+          const waitTime = Date.now() - waitStart;
+
+          console.log(`⚡ Background validation completed! (waited ${waitTime}ms)`);
+
+          // Apply result same as instant feedback path
+          if (!checkmarkAnimations.current[currentLineNumber]) {
+            checkmarkAnimations.current[currentLineNumber] = new Animated.Value(0);
+          }
+          Animated.spring(checkmarkAnimations.current[currentLineNumber], {
+            toValue: 1,
+            useNativeDriver: true,
+            tension: 50,
+            friction: 7,
+          }).start();
+
+          setValidationResults(prev => ({ ...prev, [currentLineNumber]: response }));
+
+          if (response.mathematicallyCorrect) {
+            setPreviousSteps(prev => [...prev, response.recognizedExpression]);
+            setStepCorrectness(prev => [...prev, true]);
+            setCompletedSteps(prev => [...prev, currentStep]);
+            setCurrentStep(prev => prev + 1);
+            setConsecutiveIncorrect(0);
+            setShowHintSuggestion(false);
+
+            if (response.estimatedStepsRemaining !== undefined && response.estimatedStepsRemaining >= 0) {
+              const newTotal = currentStep + response.estimatedStepsRemaining;
+              setTotalStepsEstimate(prev => Math.max(prev || 0, newTotal));
+            }
+
+            // ✨ Clear validated strokes from canvas after animation starts
+            setTimeout(() => {
+              clearCanvas();
+            }, 500);
+          } else {
+            setConsecutiveIncorrect(prev => prev + 1);
+            if (consecutiveIncorrect + 1 >= 2) {
+              setShowHintSuggestion(true);
+            }
+          }
+
+          setValidating(false);
+          isValidatingRef.current = false;
+
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          console.log(`⚡ OPTIMIZATION SUCCESS - Saved ${3400 - waitTime}ms by reusing background validation!`);
+          console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+          return;
+        } catch (error) {
+          console.warn('⚠️ Background validation promise rejected, falling back to normal validation');
+          // Fall through to normal validation
+        }
+      } else {
+        console.log('⚠️ Canvas changed - cannot use background validation, starting fresh');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        // Fall through to normal validation
+      }
+    }
+
     try {
       // ⏱️ PERFORMANCE TIMING - Start
       const perfStart = Date.now();
@@ -1015,43 +1351,18 @@ export default function App() {
       setValidating(true);
       setValidationProgress('Reading your handwriting...');
 
-      // Send entire canvas for better OCR context
-      // AI will use sequential reading to identify the newest expression
-      // PERFORMANCE: Use cached path objects instead of reparsing SVG strings
-      const pathStartTime = Date.now();
-      const allStrokes = pathStrings.map((pathString, idx) => {
-        let path = pathObjectsCache.current.get(idx);
-        if (!path) {
-          // Fallback: Parse if not in cache (shouldn't happen normally)
-          console.warn(`⚠️ Path ${idx} not in cache, parsing from SVG`);
-          path = Skia.Path.MakeFromSVGString(pathString);
-          if (path) pathObjectsCache.current.set(idx, path);
-        }
-        return { path: path!, color: pathColors[idx] };
-      });
-      const pathTime = Date.now() - pathStartTime;
-
-      console.log(`🎯 Validating with full canvas context (${allStrokes.length} total strokes)`);
-      console.log(`📊 Previously validated: ${previousSteps.length} expressions`);
-      console.log(`⏱️ ├─ Path Cache Retrieval: ${pathTime}ms`);
-
-      const imageCaptureStart = Date.now();
-      const imageBase64 = await CanvasImageCapture.captureStrokesAsBase64(
-        allStrokes,
-        { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }
-      );
-      const imageCaptureTime = Date.now() - imageCaptureStart;
-      console.log(`⏱️ ├─ Image Capture (total): ${imageCaptureTime}ms`);
-
+      // ✨ USE SHARED VALIDATION CORE - same logic as background validation
       setValidationProgress('Checking your math...');
 
       const apiCallStart = Date.now();
-      const response = await gpt4oValidationAPI.validateStep({
-        canvasImageBase64: imageBase64,
-        problem: currentProblem,
+      const response = await performValidationCore({
+        pathStrings,
+        pathColors,
+        pathObjectsCache,
+        currentProblem,
         previousSteps,
-        currentStepNumber: previousSteps.length + 1,
-        expectedSolutionSteps: currentProblem.expectedSolutionSteps,
+        currentLineNumber,
+        isBackground: false,
       });
       const apiCallTime = Date.now() - apiCallStart;
       console.log(`⏱️ ├─ API Call (total): ${apiCallTime}ms`);
@@ -1110,6 +1421,12 @@ export default function App() {
             return finalTotal;
           });
         }
+
+        // ✨ Clear validated strokes from canvas after animation starts
+        setTimeout(() => {
+          clearCanvas();
+        }, 500);
+
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
         speakFeedback(response.feedbackMessage);
