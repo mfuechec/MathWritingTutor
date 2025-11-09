@@ -61,6 +61,8 @@ export interface StepValidationResponse {
     responseTime: number; // milliseconds
     modelUsed: string;
     tokensUsed?: number;
+    cachedTokens?: number; // Tokens retrieved from cache (OpenAI prompt caching)
+    cacheHitRate?: number; // Percentage of prompt tokens that were cached (0-100)
     attemptNumber: number; // Which attempt is this for the current step
     sessionId?: string;
   };
@@ -256,11 +258,30 @@ Respond with ONLY the explanation text (no JSON, no preamble).`,
 
     const parsed = JSON.parse(content);
 
+    // Extract cache performance metrics
+    const promptTokens = response.usage?.prompt_tokens || 0;
+    const completionTokens = response.usage?.completion_tokens || 0;
+    const totalTokens = response.usage?.total_tokens || 0;
+    const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens || 0;
+    const cacheHitRate = promptTokens > 0 ? (cachedTokens / promptTokens * 100) : 0;
+
+    // Log cache performance
+    console.log(`⏱️ │  ├─ Tokens Used: ${totalTokens} (prompt: ${promptTokens}, completion: ${completionTokens})`);
+    console.log(`⏱️ │  └─ Cache Performance: ${cachedTokens} cached (${cacheHitRate.toFixed(1)}% hit rate)`);
+
+    if (cachedTokens > 0) {
+      const cacheSavings = cachedTokens * 0.5; // 50% discount on cached tokens
+      const savingsPercent = (cacheSavings / promptTokens * 100).toFixed(1);
+      console.log(`💰      Cost savings: ${savingsPercent}% from caching`);
+    }
+
     const metadata = {
       timestamp: new Date(),
       responseTime: 0, // Will be set by caller
       modelUsed: response.model || 'gpt-4o',
-      tokensUsed: response.usage?.total_tokens,
+      tokensUsed: totalTokens,
+      cachedTokens,
+      cacheHitRate: parseFloat(cacheHitRate.toFixed(1)),
       attemptNumber,
       sessionId: this.sessionId,
     };
@@ -341,11 +362,18 @@ Respond with ONLY the explanation text (no JSON, no preamble).`,
 
     const parsed = JSON.parse(content);
 
+    // Extract cache performance metrics (legacy method)
+    const promptTokens = response.usage?.prompt_tokens || 0;
+    const cachedTokens = (response.usage as any)?.prompt_tokens_details?.cached_tokens || 0;
+    const cacheHitRate = promptTokens > 0 ? (cachedTokens / promptTokens * 100) : 0;
+
     const metadata = {
       timestamp: new Date(),
       responseTime: 0, // Will be set by caller
       modelUsed: response.model || 'gpt-4o',
       tokensUsed: response.usage?.total_tokens,
+      cachedTokens,
+      cacheHitRate: parseFloat(cacheHitRate.toFixed(1)),
       attemptNumber,
       sessionId: this.sessionId,
     };
@@ -511,15 +539,16 @@ A step is CORRECT if it is algebraically equivalent to the previous step or orig
 VALIDATION PROCESS:
 1. Read what the student wrote (GPT-4o Vision handles OCR)
 2. Identify what mathematical operation they performed
-3. Verify it's algebraically valid
+3. Verify it's algebraically valid by checking equivalence
 4. Accept ALL mathematically valid approaches
-5. Only mark incorrect if you're CERTAIN there's a mathematical error
+5. Mark as correct only if algebraically equivalent to previous step
 
-BENEFIT OF DOUBT PRINCIPLE:
-- If you're uncertain (validation_confidence < 0.85), mark as CORRECT and note the ambiguity
+VALIDATION PRINCIPLES:
 - Accept valid alternative solution strategies (students don't have to follow one specific path)
 - Allow shortcuts if mathematically sound (e.g., combining multiple steps mentally)
-- When in doubt, favor the student`;
+- Judge by algebraic correctness, not by the method used
+- If uncertain about handwriting OCR, note the ambiguity in transcription_notes
+- Be accurate: only mark mathematically_correct=true if confident (>=0.75) the math is valid`;
 
     const personaGuidelines = this.getPersonaGuidelines(personaType);
 
@@ -660,8 +689,8 @@ Set validation_confidence based on your certainty about the mathematical judgmen
 - 0.7-0.8 = Somewhat uncertain, could be valid in a different approach
 - < 0.7 = Cannot reliably validate (ambiguous handwriting, unclear operation)
 
-⚠️ WHEN IN DOUBT: Set validation_confidence < 0.85 rather than marking incorrect.
-The system will automatically give benefit of doubt to low-confidence rejections.
+⚠️ Be accurate: Only mark as correct if you are confident (>=0.75) the math is algebraically valid.
+Low confidence judgments will be logged for review.
 
 HINTS:
 Level 1: Conceptual cue, Level 2: Specific suggestion, Level 3: Scaffolded step`;
@@ -732,8 +761,8 @@ Step 4 - Set validation_confidence:
 - 0.7-0.8 = Somewhat uncertain, could be valid in different approach
 - < 0.7 = Cannot reliably validate
 
-⚠️ REMEMBER: If uncertain, set validation_confidence < 0.85 rather than marking incorrect.
-The system will automatically give benefit of doubt to low-confidence rejections.
+⚠️ Be accurate: Only mark as correct if you're confident the math is algebraically valid.
+Low confidence judgments will be logged for review.
 
 Step 5 - Assess usefulness (separate from correctness):
 Does this step progress toward isolating the variable?
@@ -771,9 +800,9 @@ Return JSON only.`;
    * Note: recognizedExpression and recognitionConfidence will be filled by the caller
    * (either from GPT-4o Vision directly, or from Mathpix OCR if using legacy method)
    *
-   * BENEFIT OF DOUBT SAFETY NET:
-   * If AI reports low validation_confidence (<0.85) on an incorrect judgment,
-   * we override to mark as correct to avoid false negatives.
+   * VALIDATION APPROACH:
+   * Trusts the AI's mathematical judgment without overrides.
+   * Logs low confidence cases for monitoring and debugging.
    */
   private parseValidationResponse(
     parsed: any,
@@ -783,19 +812,26 @@ Return JSON only.`;
     const validationConfidence = parsed.validation_confidence || 1.0;
     const reportedCorrect = parsed.mathematically_correct || false;
 
-    // BENEFIT OF DOUBT: If AI is uncertain, assume correct to avoid false negatives
-    const mathematicallyCorrect = validationConfidence < 0.85 && !reportedCorrect
-      ? true
-      : reportedCorrect;
+    // Trust AI's judgment without override
+    const mathematicallyCorrect = reportedCorrect;
 
-    // Log when we override to give benefit of doubt
-    if (validationConfidence < 0.85 && !reportedCorrect) {
-      console.warn('⚠️ BENEFIT OF DOUBT - Low confidence, marking as CORRECT:', {
+    // Log AI validation details for debugging
+    console.log('🔍 AI Validation Details:', {
+      startingEquation: 'previous step',
+      studentWrote: parsed.transcribed_expression,
+      aiJudgment: parsed.mathematically_correct,
+      aiConfidence: validationConfidence,
+      finalJudgment: mathematicallyCorrect,
+      errorDetails: parsed.error_details || 'none'
+    });
+
+    // Warn about low confidence judgments for monitoring
+    if (validationConfidence < 0.85) {
+      console.warn('⚠️ LOW CONFIDENCE VALIDATION:', {
         expression: parsed.transcribed_expression,
         validationConfidence,
-        originalJudgment: reportedCorrect,
-        overriddenTo: true,
-        reason: 'validation_confidence < 0.85 triggers automatic benefit of doubt'
+        judgment: reportedCorrect ? 'CORRECT' : 'INCORRECT',
+        note: 'AI is uncertain about this judgment - review if needed'
       });
     }
 
