@@ -34,12 +34,16 @@ export class CanvasImageCapture {
       console.warn('⚠️ No strokes to capture - returning empty image');
     }
 
-    // QUALITY IMPROVEMENT: 1.5x resolution for balanced OCR accuracy and speed
-    const SCALE_FACTOR = 1.5;
+    // PERFORMANCE: 1.0x resolution for faster rendering (was 1.5x)
+    // Testing showed GPT-4o Vision performs well even at native resolution
+    const SCALE_FACTOR = 1.0;
     const scaledWidth = width * SCALE_FACTOR;
     const scaledHeight = height * SCALE_FACTOR;
 
     try {
+      // ⏱️ DETAILED TIMING - Image Capture
+      const surfaceStartTime = Date.now();
+
       // Create an offscreen surface at higher resolution
       const surface = Skia.Surface.Make(scaledWidth, scaledHeight);
       if (!surface) {
@@ -54,7 +58,12 @@ export class CanvasImageCapture {
       // Fill background
       canvas.clear(Skia.Color(backgroundColor));
 
+      const surfaceTime = Date.now() - surfaceStartTime;
+      console.log(`⏱️ │  ├─ Surface Creation: ${surfaceTime}ms`);
+
       // Draw all strokes with improved anti-aliasing and OCR-optimized settings
+      const renderStartTime = Date.now();
+
       const paint = Skia.Paint();
       paint.setStyle(1); // Stroke (not Fill) - IMPORTANT for proper path rendering
       paint.setStrokeWidth(4.5); // Optimized for OCR readability and file size
@@ -68,17 +77,26 @@ export class CanvasImageCapture {
         canvas.drawPath(stroke.path, paint);
       }
 
+      const renderTime = Date.now() - renderStartTime;
+      console.log(`⏱️ │  ├─ Stroke Rendering (${strokes.length} strokes): ${renderTime}ms`);
+
       // Get image snapshot at higher resolution
+      const snapshotStartTime = Date.now();
       const image = surface.makeImageSnapshot();
       if (!image) {
         throw new Error('Failed to create image snapshot');
       }
+      const snapshotTime = Date.now() - snapshotStartTime;
+      console.log(`⏱️ │  ├─ Image Snapshot: ${snapshotTime}ms`);
 
       // Encode to PNG (will be at 2x resolution)
+      const encodeStartTime = Date.now();
       const pngData = image.encodeToBase64();
+      const encodeTime = Date.now() - encodeStartTime;
+      console.log(`⏱️ │  └─ PNG Encoding: ${encodeTime}ms`);
 
       console.log(`📸 Image captured: ${scaledWidth}x${scaledHeight} (${SCALE_FACTOR}x scale)`);
-      console.log(`📊 Image size: ${pngData.length} bytes`);
+      console.log(`📊 Image size: ${pngData.length} bytes (${(pngData.length / 1024).toFixed(1)}KB)`);
 
       // DEBUG: Log the data URL so you can paste into browser to inspect the image
       // This helps diagnose OCR issues by showing exactly what Mathpix receives

@@ -178,6 +178,9 @@ export default function App() {
   const feedbackSlideAnim = useRef(new Animated.Value(10)).current;
   const pathRef = useRef<SkPath | null>(null);
   const colorRef = useRef<string>(COLORS.BLACK);
+
+  // PERFORMANCE: Cache parsed path objects to avoid expensive SVG reparsing
+  const pathObjectsCache = useRef<Map<number, SkPath>>(new Map());
   const startYRef = useRef<number>(0);
   const isErasingRef = useRef<boolean>(false);
 
@@ -736,8 +739,13 @@ export default function App() {
 
   const getLineNumber = (y: number): number => Math.floor(y / GUIDE_LINE_SPACING);
 
-  const addCompletedStroke = useCallback((pathString: string, color: string, lineNumber: number) => {
-    setPathStrings(prev => [...prev, pathString]);
+  const addCompletedStroke = useCallback((pathString: string, pathObject: SkPath, color: string, lineNumber: number) => {
+    setPathStrings(prev => {
+      const newIndex = prev.length;
+      // PERFORMANCE: Cache the path object to avoid reparsing later
+      pathObjectsCache.current.set(newIndex, pathObject);
+      return [...prev, pathString];
+    });
     setPathColors(prev => [...prev, color]);
     setPathLineNumbers(prev => [...prev, lineNumber]);
   }, []);
@@ -749,7 +757,11 @@ export default function App() {
     const strokesToKeep: number[] = [];
 
     pathStrings.forEach((pathString, index) => {
-      const path = Skia.Path.MakeFromSVGString(pathString);
+      // PERFORMANCE: Use cached path instead of reparsing
+      let path = pathObjectsCache.current.get(index);
+      if (!path) {
+        path = Skia.Path.MakeFromSVGString(pathString);
+      }
       if (!path) {
         strokesToKeep.push(index);
         return;
@@ -791,6 +803,16 @@ export default function App() {
 
     // Update state to keep only non-erased strokes
     if (strokesToKeep.length < pathStrings.length) {
+      // PERFORMANCE: Rebuild cache with new indices
+      const newCache = new Map<number, SkPath>();
+      strokesToKeep.forEach((oldIndex, newIndex) => {
+        const cachedPath = pathObjectsCache.current.get(oldIndex);
+        if (cachedPath) {
+          newCache.set(newIndex, cachedPath);
+        }
+      });
+      pathObjectsCache.current = newCache;
+
       setPathStrings(prev => strokesToKeep.map(i => prev[i]));
       setPathColors(prev => strokesToKeep.map(i => prev[i]));
       setPathLineNumbers(prev => strokesToKeep.map(i => prev[i]));
@@ -839,6 +861,7 @@ export default function App() {
     setPathStrings([]);
     setPathColors([]);
     setPathLineNumbers([]);
+    pathObjectsCache.current.clear(); // PERFORMANCE: Clear path cache
     setValidationResults({});
     setPreviousSteps([]);
     setStepCorrectness([]);
@@ -982,27 +1005,47 @@ export default function App() {
     }
 
     try {
+      // ⏱️ PERFORMANCE TIMING - Start
+      const perfStart = Date.now();
+      console.log('⏱️ ═══════════════════════════════════════════════════');
+      console.log('⏱️ PERFORMANCE BREAKDOWN - VALIDATION PIPELINE');
+      console.log('⏱️ ═══════════════════════════════════════════════════');
+
       isValidatingRef.current = true;
       setValidating(true);
       setValidationProgress('Reading your handwriting...');
 
       // Send entire canvas for better OCR context
       // AI will use sequential reading to identify the newest expression
+      // PERFORMANCE: Use cached path objects instead of reparsing SVG strings
+      const pathStartTime = Date.now();
       const allStrokes = pathStrings.map((pathString, idx) => {
-        const path = Skia.Path.MakeFromSVGString(pathString);
+        let path = pathObjectsCache.current.get(idx);
+        if (!path) {
+          // Fallback: Parse if not in cache (shouldn't happen normally)
+          console.warn(`⚠️ Path ${idx} not in cache, parsing from SVG`);
+          path = Skia.Path.MakeFromSVGString(pathString);
+          if (path) pathObjectsCache.current.set(idx, path);
+        }
         return { path: path!, color: pathColors[idx] };
       });
+      const pathTime = Date.now() - pathStartTime;
 
       console.log(`🎯 Validating with full canvas context (${allStrokes.length} total strokes)`);
       console.log(`📊 Previously validated: ${previousSteps.length} expressions`);
+      console.log(`⏱️ ├─ Path Cache Retrieval: ${pathTime}ms`);
 
+      const imageCaptureStart = Date.now();
       const imageBase64 = await CanvasImageCapture.captureStrokesAsBase64(
         allStrokes,
         { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }
       );
+      const imageCaptureTime = Date.now() - imageCaptureStart;
+      console.log(`⏱️ ├─ Image Capture (total): ${imageCaptureTime}ms`);
 
       setValidationProgress('Checking your math...');
 
+      const apiCallStart = Date.now();
       const response = await gpt4oValidationAPI.validateStep({
         canvasImageBase64: imageBase64,
         problem: currentProblem,
@@ -1010,8 +1053,12 @@ export default function App() {
         currentStepNumber: previousSteps.length + 1,
         expectedSolutionSteps: currentProblem.expectedSolutionSteps,
       });
+      const apiCallTime = Date.now() - apiCallStart;
+      console.log(`⏱️ ├─ API Call (total): ${apiCallTime}ms`);
 
       setValidationProgress('Done!');
+
+      const uiUpdateStart = Date.now();
 
       if (!checkmarkAnimations.current[currentLineNumber]) {
         checkmarkAnimations.current[currentLineNumber] = new Animated.Value(0);
@@ -1159,6 +1206,13 @@ export default function App() {
         }
       }
 
+      const uiUpdateTime = Date.now() - uiUpdateStart;
+      const totalTime = Date.now() - perfStart;
+
+      console.log(`⏱️ ├─ UI Update: ${uiUpdateTime}ms`);
+      console.log(`⏱️ └─ TOTAL TIME: ${totalTime}ms`);
+      console.log('⏱️ ═══════════════════════════════════════════════════');
+
       setFeedbackExpanded(true);
       lastValidatedLineRef.current = currentLineNumber;
       setTimeout(() => {
@@ -1264,9 +1318,10 @@ export default function App() {
           // Draw mode
           if (pathRef.current) {
             const pathString = pathRef.current.toSVGString();
+            const pathCopy = pathRef.current.copy(); // Create a copy for caching
             const strokeColor = colorRef.current;
             const lineNumber = Math.floor(startYRef.current / GUIDE_LINE_SPACING);
-            runOnJS(addCompletedStroke)(pathString, strokeColor, lineNumber);
+            runOnJS(addCompletedStroke)(pathString, pathCopy, strokeColor, lineNumber);
           }
           pathRef.current = null;
           runOnJS(setCurrentPath)(null);
