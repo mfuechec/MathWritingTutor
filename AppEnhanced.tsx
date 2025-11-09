@@ -910,6 +910,20 @@ export default function App() {
     setCurrentQuestion(null);
   }, [currentProblem]);
 
+  /**
+   * Clear only the canvas strokes without affecting validated expressions
+   * Used after successful validation to clear the drawing area while keeping
+   * the validated expressions visible in the top-left corner
+   */
+  const clearCanvasStrokes = useCallback(() => {
+    console.log('🧹 CLEAR CANVAS STROKES - Removing drawing only (keeping validated expressions)');
+    setPathStrings([]);
+    setPathColors([]);
+    setPathLineNumbers([]);
+    pathObjectsCache.current.clear(); // PERFORMANCE: Clear path cache
+    console.log('✅ Canvas strokes cleared (validated expressions preserved)');
+  }, []);
+
   const toggleEraser = useCallback(() => {
     const newErasingState = !isErasing;
     setIsErasing(newErasingState);
@@ -1241,7 +1255,7 @@ export default function App() {
 
         // ✨ Clear validated strokes from canvas after animation starts
         setTimeout(() => {
-          clearCanvas();
+          clearCanvasStrokes();
         }, 500);
       } else {
         setConsecutiveIncorrect(prev => prev + 1);
@@ -1313,7 +1327,7 @@ export default function App() {
 
             // ✨ Clear validated strokes from canvas after animation starts
             setTimeout(() => {
-              clearCanvas();
+              clearCanvasStrokes();
             }, 500);
           } else {
             setConsecutiveIncorrect(prev => prev + 1);
@@ -1424,7 +1438,7 @@ export default function App() {
 
         // ✨ Clear validated strokes from canvas after animation starts
         setTimeout(() => {
-          clearCanvas();
+          clearCanvasStrokes();
         }, 500);
 
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
