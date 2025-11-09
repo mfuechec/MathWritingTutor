@@ -1058,14 +1058,25 @@ export default function App() {
       { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }
     );
 
-    // Call OpenAI validation API
-    // NOTE: Not passing expectedSolutionSteps to avoid anchoring bias
+    // Sanitize problem object - remove answer-revealing fields
+    // Even though expectedSolutionSteps isn't in the prompt, the entire Problem object
+    // is sent to the API, and GPT-4o can see these fields in the data structure
+    const sanitizedProblem = {
+      ...capturedProblem,
+      expectedSolutionSteps: undefined,  // Remove solution steps array
+      goalState: {
+        ...capturedProblem.goalState,
+        targetForm: undefined,  // Remove final answer (e.g., "x = 2")
+        targetValue: undefined,  // Remove target value if present
+      },
+    };
+
+    // Call OpenAI validation API with sanitized problem
     const response = await gpt4oValidationAPI.validateStep({
       canvasImageBase64: imageBase64,
-      problem: capturedProblem,
+      problem: sanitizedProblem,
       previousSteps: capturedPreviousSteps,
       currentStepNumber: capturedPreviousSteps.length + 1,
-      // expectedSolutionSteps: Intentionally omitted - prevents anchoring bias
     });
 
     console.log(`✅ [${isBackground ? 'BACKGROUND' : 'MANUAL'}] Validation result:`);
